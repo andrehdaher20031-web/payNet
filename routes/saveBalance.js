@@ -55,6 +55,9 @@ router.get("/all", authMiddleware, async (req, res) => {
     res.status(500).json({ message: "حدث خطأ في الخادم" });
   }
 });
+
+
+
 router.get("/all-admin", async (req, res) => {
   try {
     const payments = await Balance.find().sort({ date: -1 });

@@ -51,6 +51,9 @@ router.get("/user/confirmed", authMiddleware, async (req, res) => {
   status: { $in: ["تم التسديد", "غير مسددة"] }
     });
 
+    
+
+
     res.json(payments);
   } catch (error) {
     console.error("فشل في جلب عمليات المستخدم:", error);

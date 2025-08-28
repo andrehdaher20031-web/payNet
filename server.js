@@ -4,6 +4,7 @@ const cors = require('cors');
 require('dotenv').config();
 const saveBalanceRoutes = require("./routes/saveBalance");
 const adminRoutes = require("./routes/admin");
+const point = require("./routes/point");
 const http = require('http'); // جديد
 const { Server } = require('socket.io'); // جديد
 
@@ -56,6 +57,7 @@ app.get('/', (req, res) => {
 // Routes
 const authRoutes = require("./routes/authRoutes");
 app.use("/api", authRoutes);
+app.use("/api/point", point);
 
 
 app.use("/api/user", require("./routes/userRoutes"));

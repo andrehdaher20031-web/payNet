@@ -8,7 +8,7 @@ const balanceSchema = new mongoose.Schema({
   operator: String,
   amount: Number,
   noticeNumber:Number,
-  date:Date,
+  date: { type: Date, default: Date.now },  // 👈 تلقائياً ياخذ التاريخ الحالي
   isConfirmed: { type: Boolean, default: false },
   status: { type: Boolean, default: true },
   createdAt: {
