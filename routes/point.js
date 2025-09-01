@@ -53,25 +53,25 @@ router.get('/add-point', async (req, res) => {
     res.status(500).json({ err });
   }
 });
+router.delete('/delete/:id', async (req, res) => {
+  const idDelete = req.params.id;
 
-router.delete('/delete/:id' , async(req,res)=>{
-  const idDelete = req.params.id
-  try{
-    const emailPoint  = await Point.findById(idDelete)
-    await Point.findByIdAndDelete(idDelete)
-    await User.findOneAndDelete({email : emailPoint.username})
+  try {
+    const emailPoint = await Point.findById(idDelete);
 
-    
-    res.status(201).json("delete done")
+    if (!emailPoint) {
+      return res.status(404).json({ message: "Point not found" });
+    }
 
+    await Point.findByIdAndDelete(idDelete);
+    await User.findOneAndDelete({ email: emailPoint.username });
+
+    res.status(200).json({ message: "Delete done" });
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Server error" });
   }
-  catch(err){
-    console.log(err)
-    res.status(500).json(err)
-  }
-
-})
-
+});
 router.put('/add-balance/:id', async (req, res) => {
   const { amount, email , username , owner } = req.body;
   console.log(username)
