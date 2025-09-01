@@ -57,7 +57,11 @@ router.get('/add-point', async (req, res) => {
 router.delete('/delete/:id' , async(req,res)=>{
   const idDelete = req.params.id
   try{
+    const emailPoint  = await Point.findById(idDelete)
     await Point.findByIdAndDelete(idDelete)
+    await User.findOneAndDelete(emailPoint.username)
+
+    
     res.status(201).json("delete done")
 
   }
