@@ -59,7 +59,7 @@ router.delete('/delete/:id' , async(req,res)=>{
   try{
     const emailPoint  = await Point.findById(idDelete)
     await Point.findByIdAndDelete(idDelete)
-    await User.findOneAndDelete(emailPoint.username)
+    await User.findOneAndDelete({email : emailPoint.username})
 
     
     res.status(201).json("delete done")
