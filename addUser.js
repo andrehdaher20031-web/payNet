@@ -6,7 +6,6 @@ const User = require("./models/User");
 // تحميل متغيرات البيئة
 dotenv.config();
 
-// الاتصال بقاعدة البيانات
 mongoose.connect(process.env.MONGO_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
@@ -14,10 +13,10 @@ mongoose.connect(process.env.MONGO_URI, {
 .then(async () => {
   console.log("🟢 تم الاتصال بقاعدة البيانات");
 
-  const email = "hassan"; // يمكنك تغييره
+  const email = "hadi46"; // يمكنك تغييره
   const plainPassword = "Hh123123"; // كلمة المرور (غير مشفرة)
-  const name ="حسن بدر الدين بدر"
-  const number = "0933071564"
+  const name ="هادي دومط";
+  const number = "1";
 
   // تحقق إذا كان المستخدم موجود مسبقاً
   const existingUser = await User.findOne({ email });
@@ -26,23 +25,27 @@ mongoose.connect(process.env.MONGO_URI, {
     return process.exit(0);
   }
 
-  // تشفير كلمة المرور
-  const hashedPassword = await plainPassword;
-  const Balance = 0;
+  const balance = 0;
   const role = "user";
 
-  // إنشاء المستخدم
+  // ✅ توليد id يدوي
+  const customId = new mongoose.Types.ObjectId("6881182fc169b808649726da"); // يولد ObjectId جديد
+  // أو يمكنك استخدام نص مخصص: const customId = "user_001";
+
+  // إنشاء المستخدم مع id مخصص
   const newUser = new User({
+    _id: customId,         // هنا وضعنا الـ id يدوي
     email,
-    password: hashedPassword,
-    balance : Balance,
+    password: plainPassword,
+    balance,
     name,
     number,
     role,
   });
 
   await newUser.save();
-  console.log("✅ تم إنشاء المستخدم بنجاح");
+  console.log("✅ تم إنشاء المستخدم بنجاح بالـ id:", customId.toString());
+
   process.exit(0);
 })
 .catch((err) => {

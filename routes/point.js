@@ -72,9 +72,9 @@ router.delete('/delete/:id', async (req, res) => {
     res.status(500).json({ error: "Server error" });
   }
 });
+
 router.put('/add-balance/:id', async (req, res) => {
   const { amount, email , username , owner } = req.body;
-  console.log(username)
   const id = req.params.id;
 
   try {
@@ -85,41 +85,40 @@ router.put('/add-balance/:id', async (req, res) => {
     const findPoint = await Point.findById(id);
     if (!findPoint) return res.status(404).json({ message: "نقطة البيع غير موجودة" });
 
-    findPoint.balance += value;
-    await findPoint.save();
-
-
-    const search = findPoint.username;
-    const point = await User.findOne({ email: search });
-    if (!point) return res.status(404).json({ message: "الحساب المرتبط بنقطة البيع غير موجود" });
-
-    // تحديث رصيد نقطة البيع
-    point.balance += value;
-    await point.save();
-
-    // تحديث رصيد المستخدم
+    // إيجاد المستخدم الذي سيدفع
     const user = await User.findOne({ email });
     if (!user) return res.status(404).json({ message: "المستخدم غير موجود" });
 
-    if (user.balance < value) return res.status(400).json({ message: "الرصيد غير كافٍ" });
+    if (user.balance < value) {
+      return res.status(400).json({ message: "الرصيد غير كافٍ" });
+    }
 
+    // تحديث رصيد نقطة البيع
+    findPoint.balance += value;
+    await findPoint.save();
+
+    // تحديث رصيد الحساب المرتبط بنقطة البيع
+    const point = await User.findOne({ email: findPoint.username });
+    if (!point) return res.status(404).json({ message: "الحساب المرتبط بنقطة البيع غير موجود" });
+
+    point.balance += value;
+    await point.save();
+
+    // خصم من المستخدم
     user.balance -= value;
     await user.save();
-        // حفظ عملية الدفع
-        const balanceDoc  = new Balance({
-          user:id,
-          destination : email ,
-          name : username, 
-          operator : owner,
-          amount ,
-          isConfirmed : true,
-    
-    
-        });
 
-      await  balanceDoc.save()
+    // حفظ عملية الدفع
+    const balanceDoc = new Balance({
+      user: id,
+      destination: email,
+      name: username,
+      operator: owner,
+      amount: value,
+      isConfirmed: true,
+    });
 
-    
+    await balanceDoc.save();
 
     res.status(200).json({ message: "تم تعديل الرصيد بنجاح", point, user });
   } catch (err) {
@@ -127,7 +126,6 @@ router.put('/add-balance/:id', async (req, res) => {
     res.status(500).json({ message: "حدث خطأ أثناء تعديل الرصيد" });
   }
 });
-
 
 
 router.get("/all", async (req, res) => {
