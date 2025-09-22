@@ -3,6 +3,7 @@ const express = require("express");
 const router = express.Router();
 const User = require("../models/User");
 const Payment = require("../models/Payment"); // تأكد أنك استوردت Payment
+const saveNumber = require("../models/saveNumber"); // تأكد أنك استوردت Payment
 const authMiddleware = require("../middleware/authMiddleware");
 
 router.post("/internet-full", authMiddleware, async (req, res) => {
@@ -72,4 +73,122 @@ if (io) {
   }
 });
 
+
+router.post("/save-number",authMiddleware, async (req, res) => {
+  try{ 
+
+    
+    const formData = req.body
+    console.log(formData)
+    const userId = req.user.id
+    const newNumber = new saveNumber({
+      user: userId,
+      landline: formData.number,
+      company : formData.company,
+      speed: formData.speed,
+      amount: formData.amount,
+      email: formData.email,
+      date: formData.date,
+
+      
+
+    })
+    await newNumber.save();
+res.status(201).json({ message: "تم حفظ الرقم بنجاح" });
+
+}catch(err){
+  console.error("❌ خطأ أثناء حفظ الرقم:", err);
+  res.status(500).json({ message: "حدث خطأ أثناء العملية" });
+}
+}
+
+)
+
+
+router.get('/save-number' , async(req,res)=>{
+  const email = req.query
+  try{
+  const payment = await saveNumber.find(email)
+  res.status(201).json(payment)
+}catch{
+  res.status(401).json("error")
+
+}
+})
+
+
+router.post('/pay-selected' ,authMiddleware ,async(req,res)=>{
+  try{
+    const userId = req.user.id
+    const { email , selectedData } = req.body
+
+    if (!Array.isArray(selectedData) || selectedData.length === 0) {
+      return res.status(400).json({ message: "selectedData يجب أن تكون مصفوفة غير فارغة" });
+    }
+
+    // selectedData: مصفوفة كائنات محفوظة تحتوي على بيانات الرقم
+    const docsToCreate = selectedData.map((item) => ({
+      user: userId,
+      landline: item?.landline != null ? String(item.landline) : undefined,
+      company: item?.company,
+      speed: item?.speed,
+      email: item?.email ?? email ?? "",
+      amount: item?.amount,
+      paymentType: item?.paymentType ?? "cash",
+      status: "جاري التسديد"
+    })).filter(doc => !!doc.landline);
+
+    if (docsToCreate.length === 0) {
+      return res.status(400).json({ message: "لا توجد عناصر صالحة للإنشاء (landline مفقود)" });
+    }
+
+    const created = await Payment.insertMany(docsToCreate, { ordered: false });
+
+    // تحديث قائمة العمليات المعلقة عبر Socket.IO إن وجدت
+    const io = req.app.get("io");
+    if (io) {
+      const pendingPayments = await Payment.find({ status: { $in: ["جاري التسديد", "بدء التسديد"] } });
+      io.emit("pendingPaymentsUpdate", pendingPayments);
+    }
+
+    return res.status(201).json({ message: "تم إنشاء المدفوعات", count: created.length, payments: created });
+  }catch(err){
+    res.status(401).json(err)
+  }
+})
+
+
+router.put('/save-number/:id', authMiddleware, async (req,res)=>{
+  const id = req.params.id
+  const {landline ,company , date , amount} = req.body
+  try{
+  const updatePayment = await saveNumber.findByIdAndUpdate(
+    id,
+    {
+      landline : landline,
+      company : company,
+      amount : amount,
+      date:date,
+
+    },
+    {new : true}
+
+  )
+res.status(201).json("done")
+}catch(err){
+  res.status(401).json(err)
+}
+
+})
+
+
+router.delete('/save-number/:id' , authMiddleware , async(req,res)=>{
+  const id = req.params.id
+  try{
+    await saveNumber.findByIdAndDelete(id)
+    res.status(201).json("done")
+  }catch(err){
+    res.status(401).json(err)
+  }
+})
 module.exports = router;

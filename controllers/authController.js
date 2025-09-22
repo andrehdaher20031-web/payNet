@@ -12,7 +12,7 @@ exports.login = async (req, res) => {
     }
 
     // تحقق من كلمة المرور
-    const isMatch = await User.findOne({ password }) ;
+    const isMatch = user.password === password;
     if (!isMatch) {
       return res.status(401).json({ message: "كلمة المرور غير صحيحة" });
     }
