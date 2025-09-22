@@ -188,6 +188,7 @@ router.delete('/save-number/:id' , authMiddleware , async(req,res)=>{
     await saveNumber.findByIdAndDelete(id)
     res.status(201).json("done")
   }catch(err){
+    console.log(err)
     res.status(401).json(err)
   }
 })
