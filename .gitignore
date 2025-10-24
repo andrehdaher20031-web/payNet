@@ -1,0 +1,5 @@
+# تجاهل مجلدات النظام و VSCode
+.vscode/
+AppData/
+node_modules/
+*.log
