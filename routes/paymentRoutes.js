@@ -121,6 +121,7 @@ router.post('/pay-selected' ,authMiddleware ,async(req,res)=>{
   try{
     const userId = req.user.id
     const { email , selectedData } = req.body
+    console.log(req.body)
 
     if (!Array.isArray(selectedData) || selectedData.length === 0) {
       return res.status(400).json({ message: "selectedData يجب أن تكون مصفوفة غير فارغة" });
@@ -141,6 +142,23 @@ router.post('/pay-selected' ,authMiddleware ,async(req,res)=>{
     if (docsToCreate.length === 0) {
       return res.status(400).json({ message: "لا توجد عناصر صالحة للإنشاء (landline مفقود)" });
     }
+    let totalAmount = 0;
+    docsToCreate.forEach(doc => {
+      totalAmount += parseFloat((doc.amount * 1.05).toFixed(2));
+    });
+
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: "المستخدم غير موجود" });
+    }
+
+    if (user.balance < totalAmount) {
+      return res.status(400).json({ message: "الرصيد غير كافٍ لإتمام العملية" });
+    }
+    
+    // خصم الرصيد
+    user.balance -= totalAmount;
+    await user.save();  
 
     const created = await Payment.insertMany(docsToCreate, { ordered: false });
 
