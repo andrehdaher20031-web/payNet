@@ -372,5 +372,38 @@ router.post('/confirm-daen', async  (req,res)=>{
 })
 
 
+router.get("/payments/bydate", async (req, res) => {
+  try {
+    // استلام التاريخين من الفرونت
+    const { fromDate, toDate } = req.query;
+
+    // التحقق من وجود التاريخين
+    if (!fromDate || !toDate) {
+      return res
+        .status(400)
+        .json({ message: "يرجى إرسال تاريخ البداية والنهاية" });
+    }
+
+    // تحويل النصوص إلى كائنات Date
+    const start = new Date(fromDate);
+    const end = new Date(toDate);
+
+    // ضبط نهاية اليوم الأخير لتشمل كامل اليوم
+    end.setHours(23, 59, 59, 999);
+
+    // البحث في قاعدة البيانات
+    const payments = await InternetPayment.find({
+      status: { $in: ["تم التسديد", "غير مسددة"] },
+      createdAt: { $gte: start, $lte: end }, // بين التاريخين
+    }).sort({ createdAt: -1 });
+
+    res.json(payments);
+  } catch (error) {
+    console.error("فشل في جلب عمليات المستخدم حسب التاريخ:", error);
+    res.status(500).json({ message: "حدث خطأ في الخادم" });
+  }
+});
+
+
 
 module.exports = router; // هذا السطر مهم جداً
