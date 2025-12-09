@@ -7,7 +7,7 @@ const balanceSchema = new mongoose.Schema({
   number: Number,
   operator: String,
   amount: Number,
-  noticeNumber:Number,
+  noticeNumber: Number,
   date: { type: Date, default: Date.now },  // 👈 تلقائياً ياخذ التاريخ الحالي
   isConfirmed: { type: Boolean, default: false },
   status: { type: Boolean, default: true },
@@ -16,10 +16,10 @@ const balanceSchema = new mongoose.Schema({
     default: Date.now
   },
   user: {
-  type: mongoose.Schema.Types.ObjectId,
-  ref: "User",
-  required: true,
-}
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "User",
+    required: true,
+  }
 });
 
 module.exports = mongoose.model("Haram", balanceSchema);

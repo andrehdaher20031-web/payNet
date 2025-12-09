@@ -2,6 +2,7 @@
 const express = require("express");
 const router = express.Router();
 const User = require("../models/User");
+const Balance = require("../models/Balance");
 const authMiddleware = require("../middleware/authMiddleware");
 
 // GET /api/user/balance
@@ -16,6 +17,22 @@ router.get("/balance", authMiddleware, async (req, res) => {
   }
 });
 
+router.get('/daen', authMiddleware, async (req, res) => {
+  try {
+    const user = await User.findById(req.user.id)
+    const balance = await Balance.find({ 
+      status: false,
+      name: user.email
+     })
+     const totalAmount = balance.reduce((sum , item)=> sum + item.amount  ,0)
+  
+    if (!user) return res.status(404).json({ message: "المستخدم غير موجود" });
+    res.json({ daen : totalAmount });
+  } catch (err) {
+    res.status(500).json({ message: "حدث خطأ داخلي" });
+  }
+
+})
 
 router.post("/", async (req, res) => {
   try {

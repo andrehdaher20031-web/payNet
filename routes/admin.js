@@ -41,20 +41,42 @@ router.patch("/start/:id", async (req, res) => {
 });
 
 
-// ✅ فلترة العمليات حسب المستخدم
 router.get("/user/confirmed", authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
 
-    const payments = await InternetPayment.find({
-      user: userId,
-  status: { $in: ["تم التسديد", "غير مسددة"] }
+    const payments = await InternetPayment.find({ user: userId }).lean();
+    const batchpayments = await Balance.find({ user: userId }).sort({ date: -1 }).lean();
+
+    const paymentWithType = payments.map(p => ({
+      ...p,
+        landline: String(p.landline || ""),
+      source: "internet"
+    }));
+
+    const batchWithType = batchpayments.map(b => ({
+      ...b,
+       landline: String(b.number || ""),
+      company: b.operator || "—",
+      speed: "دفعة",
+      note: "—",
+      paymentType: b.paymentType || "cash",
+      status: b.status ? "تم التسديد" : "غير مسددة",
+      createdAt: b.createdAt,
+      updatedAt: b.date || b.createdAt,
+      source: "batch"
+    }));
+
+    const allData = [...paymentWithType, ...batchWithType];
+
+    allData.sort((a, b) => {
+      const da = new Date(a.updatedAt || a.createdAt || 0).getTime();
+      const db = new Date(b.updatedAt || b.createdAt || 0).getTime();
+      return db - da;
     });
 
-    
+    res.json(allData);
 
-
-    res.json(payments);
   } catch (error) {
     console.error("فشل في جلب عمليات المستخدم:", error);
     res.status(500).json({ message: "حدث خطأ في الخادم" });
