@@ -3,3 +3,26 @@
 AppData/
 node_modules/
 *.log
+
+# Environment
+.env
+.env.local
+.env.*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Build / output
+dist/
+build/
+coverage/
+logs/
+
+# npm / yarn
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Project-specific (ignore if you do not want this file tracked)
+addUser.js
