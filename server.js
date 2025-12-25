@@ -6,6 +6,7 @@ const saveBalanceRoutes = require("./routes/saveBalance");
 const adminRoutes = require("./routes/admin");
 const point = require("./routes/point");
 const http = require('http'); // جديد
+const Product = require("./models/Product");
 const { Server } = require('socket.io'); // جديد
 
 
@@ -73,6 +74,7 @@ app.use("/api/saveBalance", saveBalanceRoutes);
 
 //ترحيل العمليات
 app.use("/api/admin", adminRoutes);
+app.use("/api/product", require("./routes/product"));
 
 
 
