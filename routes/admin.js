@@ -156,7 +156,6 @@ router.post("/confirm-payment", async (req, res) => {
 
     payment.isConfirmed = true;
     await payment.save();
-
     res.status(200).json({ success: true, message: "تم تحديث رصيد المستخدم" });
   } catch (error) {
     console.error("خطأ أثناء تأكيد الدفعة:", error);
@@ -245,6 +244,11 @@ router.put('/addbatch/:id'  , async(req, res)=>{
    
   
   try{
+    const balanceDaen = await Balance.findOne({}).sort({_id:-1});
+    const daenamount = balanceDaen.amountDaen || 0;
+    if(daenamount > 1000000){
+      return res.status(401).json("لا يمكن اضافة دفعة جديدة لان المبلغ المستحق اكثر من المليون")
+    }    
     const newUser = await User.findById({_id:id})
     const balanceAmount = newUser.balance + batch;
     const newBalance =await new Balance({
@@ -255,6 +259,7 @@ router.put('/addbatch/:id'  , async(req, res)=>{
       operator : "nader daher",
       noticeNumber: 1,
       number : "0966248984",
+      amountDaen : daenamount + batch,
       status: false,
       date:Date.now(),
       user : newUser._id,
@@ -382,7 +387,8 @@ router.post('/confirm-daen', async  (req,res)=>{
     }
 
      payment.status = true;
-    await payment.save();
+     payment.amountDaen = payment.amountDaen - payment.amount;
+     await payment.save();
 
     res.status(200).json({ success: true, message: "تم تحديث رصيد المستخدم" });
   } catch (error) {

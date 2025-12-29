@@ -10,6 +10,8 @@ router.post("/haram", authMiddleware, async (req, res) => {
   try {
     const { destination,name,number, operator, noticeNumber, amount ,date} = req.body;
     const userId = req.user.id;
+    const balanceDaen = await Balance.findOne({}).sort({_id:-1});
+    const amountDaen = balanceDaen.amountDaen || 0;
     
 
     // خصم الرصيد من حساب المستخدم
@@ -28,10 +30,11 @@ router.post("/haram", authMiddleware, async (req, res) => {
       noticeNumber,
       amount,
       date, 
+      amountDaen,
 
 
     });
-
+console.log(balanceDoc );
 
 
     await balanceDoc .save();
