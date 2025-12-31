@@ -34,7 +34,6 @@ router.post("/haram", authMiddleware, async (req, res) => {
 
 
     });
-console.log(balanceDoc );
 
 
     await balanceDoc .save();

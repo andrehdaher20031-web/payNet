@@ -8,8 +8,8 @@ const Balance = require("../models/Balance");
 
 
 router.get("/pending", async (req, res) => {
-  const payments = await InternetPayment.find({ 
-    status: { $in: ["جاري التسديد", "بدء التسديد"] } 
+  const payments = await InternetPayment.find({
+    status: { $in: ["جاري التسديد", "بدء التسديد"] }
   });
 
   // إرسال التحديث عبر Socket.IO لكل العملاء
@@ -31,7 +31,7 @@ router.patch("/confirm/:id", async (req, res) => {
 
 router.patch("/start/:id", async (req, res) => {
   const { id } = req.params;
-  console.log({id})
+  console.log({ id })
   const updated = await InternetPayment.findByIdAndUpdate(
     id,
     { status: "بدء التسديد" },
@@ -50,13 +50,13 @@ router.get("/user/confirmed", authMiddleware, async (req, res) => {
 
     const paymentWithType = payments.map(p => ({
       ...p,
-        landline: String(p.landline || ""),
+      landline: String(p.landline || ""),
       source: "internet"
     }));
 
     const batchWithType = batchpayments.map(b => ({
       ...b,
-       landline: String(b.number || ""),
+      landline: String(b.number || ""),
       company: b.operator || "—",
       speed: "دفعة",
       note: "—",
@@ -118,7 +118,7 @@ router.get("/user/allconfirmed", async (req, res) => {
   try {
 
     const payments = await InternetPayment.find({
-  status: { $in: ["تم التسديد", "غير مسددة"] }
+      status: { $in: ["تم التسديد", "غير مسددة"] }
     });
 
     res.json(payments);
@@ -175,7 +175,7 @@ router.get("/user/pending", authMiddleware, async (req, res) => {
 
     const payments = await InternetPayment.find({
       user: userId,
-  status: { $in: ["جاري التسديد"] }
+      status: { $in: ["جاري التسديد"] }
     });
 
     res.json(payments);
@@ -201,12 +201,12 @@ router.post("/reject/:id", async (req, res) => {
     // 2. إرجاع الرصيد للمستخدم
     const user = await User.findOne({ email });
     if (user) {
-      const Amount = amount + (amount*0.05)
+      const Amount = amount + (amount * 0.05)
       user.balance += Amount;
       await user.save();
     }
-    req.io.emit("json_message" , true)
-      
+    req.io.emit("json_message", true)
+
 
     res.status(200).json({ message: "تم الرفض وإرجاع الرصيد" });
   } catch (err) {
@@ -216,105 +216,107 @@ router.post("/reject/:id", async (req, res) => {
 });
 
 //جلب جميع المستخدمين
-router.get('/all-user', async(req,res)=>{
-  const allUser =await User.find();
-  try{
+router.get('/all-user', async (req, res) => {
+  const allUser = await User.find();
+  try {
     res.status(201).json(allUser)
 
-  }catch(err){
+  } catch (err) {
     res.status(401).json(err)
   }
 })
 
-router.delete('/deleteuser/:id' , async(req, res)=>{
+router.delete('/deleteuser/:id', async (req, res) => {
   const id = req.params.id
-  try{
-  await  User.findByIdAndDelete({_id : id})
-  res.status(201).json("تم حذف المستخدم")
-  }catch(err){
+  try {
+    await User.findByIdAndDelete({ _id: id })
+    res.status(201).json("تم حذف المستخدم")
+  } catch (err) {
     res.status(401).json(err)
 
   }
 })
 
 
-router.put('/addbatch/:id'  , async(req, res)=>{
+router.put('/addbatch/:id', async (req, res) => {
   const id = req.params.id
   const batch = req.body.amount
-   
-  
-  try{
-    const balanceDaen = await Balance.findOne({}).sort({_id:-1});
-    const daenamount = balanceDaen.amountDaen || 0;
-    if(daenamount > 1000000){
+
+
+  try {
+    const balanceDaen = await Balance.findOne({}).sort({ _id: -1 });
+
+    const daenamount = balanceDaen.amountDaen;
+    console.log(daenamount)
+    if (daenamount > 1000000) {
       return res.status(401).json("لا يمكن اضافة دفعة جديدة لان المبلغ المستحق اكثر من المليون")
-    }    
-    const newUser = await User.findById({_id:id})
+    }
+    const newUser = await User.findById({ _id: id })
     const balanceAmount = newUser.balance + batch;
-    const newBalance =await new Balance({
-      name : newUser.email,
-      amount : batch,
+    const newBalance = await new Balance({
+      name: newUser.email,
+      amount: batch,
       isConfirmed: true,
-      destination : "nader daher",
-      operator : "nader daher",
+      destination: "nader daher",
+      operator: "nader daher",
       noticeNumber: 1,
-      number : "0966248984",
-      amountDaen : daenamount + batch,
+      number: "0966248984",
+      amountDaen: daenamount + batch,
       status: false,
-      date:Date.now(),
-      user : newUser._id,
+      date: Date.now(),
+      user: newUser._id,
 
     })
 
     await newBalance.save();
     await User.findByIdAndUpdate(
-      {_id:id},
-      {balance :balanceAmount},
-      {new : true}
-    
+      { _id: id },
+      { balance: balanceAmount },
+      { new: true }
+
     )
-res.status(201).json("تم اضافة الدفعة بنجاح")
+    res.status(201).json("تم اضافة الدفعة بنجاح")
   }
 
-  catch(err){
+  catch (err) {
     res.status(401).json(err)
 
   }
 })
 
 //حذف دفعة 
-router.delete('/delete/:id' , async(req,res)=>{
+router.delete('/delete/:id', async (req, res) => {
   const id = req.params.id
-  try{
-  await Balance.findByIdAndDelete({_id : id})
-  res.status(201).json("delete done")
-  }catch(err){
+  try {
+    await Balance.findByIdAndDelete({ _id: id })
+    res.status(201).json("delete done")
+  } catch (err) {
     console.log(err)
     res.status(401).json("error")
   }
 })
 
 
-router.get("/user/:id" , async(req,res)=>{
+router.get("/user/:id", async (req, res) => {
   const id = req.params.id
-  try{
-  const updateUser= await User.findById(id)
-  res.status(200).json(updateUser)
-  }catch(err){
+  try {
+    const updateUser = await User.findById(id)
+    res.status(200).json(updateUser)
+  } catch (err) {
     res.status(401).json(err)
 
   }
 })
-router.put("/updateuser/:id" , async(req,res)=>{
+router.put("/updateuser/:id", async (req, res) => {
   const id = req.params.id
-  try{
-  const updateUser= await User.findByIdAndUpdate(
-    id,
-    req.body,
-    {new :true}
-  )
-  res.status(200).json(updateUser)
-  }catch(err){
+  try {
+    const updateUser = await User.findByIdAndUpdate(
+      id,
+      req.body,
+      { new: true }
+    )
+    res.status(200).json(updateUser)
+  } catch (err) {
     res.status(401).json(err)
 
   }
@@ -328,7 +330,7 @@ router.post("/astalam", (req, res) => {
   let fatoraDataMap = {}; // مفتاح = البريد الإلكتروني، القيمة = بيانات الفاتورة
 
   const data = req.body;
-    const {email}  = req.body;
+  const { email } = req.body;
 
 
   // if (!selectedCompany || !landline) {
@@ -345,7 +347,7 @@ router.post("/astalam", (req, res) => {
 
 // GET - جلب البيانات
 router.get("/astalam", (req, res) => {
-  const {email}  = req.query ;
+  const { email } = req.query;
   let fatoraDataMap = {}; // مفتاح = البريد الإلكتروني، القيمة = بيانات الفاتورة
 
 
@@ -357,25 +359,26 @@ router.get("/astalam", (req, res) => {
 });
 
 
-router.get('/daen',async(req,res)=>{
-  try{
-  const daenBalance = await Balance.find({status:false})
-  res.status(201).json(daenBalance)
-  }catch(err){
+router.get('/daen', async (req, res) => {
+  try {
+    const daenBalance = await Balance.find({ status: false })
+    res.status(201).json(daenBalance)
+  } catch (err) {
     res.status(401).json(err)
 
   }
-  
+
 })
 
 
 
 
-router.post('/confirm-daen', async  (req,res)=>{
-  const {id} = req.body
-  try{
-      // ابحث عن الدفعة المطلوبة
+router.post('/confirm-daen', async (req, res) => {
+  const { id } = req.body
+  try {
+    // ابحث عن الدفعة المطلوبة
     const payment = await Balance.findById(id);
+
     if (!payment) {
       return res.status(404).json({ message: "لم يتم العثور على الدفعة" });
     }
@@ -386,9 +389,14 @@ router.post('/confirm-daen', async  (req,res)=>{
       return res.status(404).json({ message: "المستخدم غير موجود" });
     }
 
-     payment.status = true;
-     payment.amountDaen = payment.amountDaen - payment.amount;
-     await payment.save();
+    payment.status = true;
+    const lastBalance = await Balance.findOneAndUpdate(
+      {},
+      { $inc: { amountDaen: -payment.amount } },
+      { sort: { _id: -1 }, new: true }
+    );
+    console.log(lastBalance)
+    await payment.save();
 
     res.status(200).json({ success: true, message: "تم تحديث رصيد المستخدم" });
   } catch (error) {
