@@ -108,6 +108,10 @@ router.put('/add-balance/:id', async (req, res) => {
     user.balance -= value;
     await user.save();
 
+        const balanceDaen = await Balance.findOne({}).sort({_id:-1});
+        const amountDaen = balanceDaen.amountDaen || 0;
+        
+
     // حفظ عملية الدفع
     const balanceDoc = new Balance({
       user: id,
@@ -116,6 +120,7 @@ router.put('/add-balance/:id', async (req, res) => {
       operator: owner,
       amount: value,
       isConfirmed: true,
+      amountDaen,
     });
 
     await balanceDoc.save();
