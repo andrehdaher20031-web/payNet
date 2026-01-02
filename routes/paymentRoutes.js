@@ -9,7 +9,7 @@ const authMiddleware = require("../middleware/authMiddleware");
 router.post("/internet-full", authMiddleware, async (req, res) => {
   try {
     console.log("internet-full");
-    const { landline, company, speed, amount, email , paymentType } = req.body;
+    const { landline, company, speed, amount, email, paymentType } = req.body;
     const userId = req.user.id;
 
     if (!landline || !company || !speed || !amount) {
@@ -21,11 +21,13 @@ router.post("/internet-full", authMiddleware, async (req, res) => {
       return res.status(404).json({ message: "المستخدم غير موجود" });
     }
 
+    const isAdmin = email && email.includes('daheradmin')
     const amountToDeduct = parseFloat((amount * 1.05).toFixed(2));
-    if (user.balance < amountToDeduct) {
-      return res.status(400).json({ message: "الرصيد غير كافٍ" });
+    if (!isAdmin) {
+      if (user.balance < amountToDeduct) {
+        return res.status(400).json({ message: "الرصيد غير كافٍ" });
+      }
     }
-
     // 💡 تحقق من التكرار: هل تم تنفيذ نفس الطلب خلال آخر دقيقة؟
     const recentDuplicate = await Payment.findOne({
       user: userId,
@@ -56,10 +58,10 @@ router.post("/internet-full", authMiddleware, async (req, res) => {
     await payment.save();
 
     const io = req.app.get("io");
-if (io) {
-  const pendingPayments = await Payment.find({ status: { $in: ["جاري التسديد", "بدء التسديد"] } });
-  io.emit("pendingPaymentsUpdate", pendingPayments);
-}
+    if (io) {
+      const pendingPayments = await Payment.find({ status: { $in: ["جاري التسديد", "بدء التسديد"] } });
+      io.emit("pendingPaymentsUpdate", pendingPayments);
+    }
 
 
     res.status(200).json({
@@ -74,53 +76,53 @@ if (io) {
 });
 
 
-router.post("/save-number",authMiddleware, async (req, res) => {
-  try{ 
+router.post("/save-number", authMiddleware, async (req, res) => {
+  try {
 
-    
+
     const formData = req.body
     console.log(formData)
     const userId = req.user.id
     const newNumber = new saveNumber({
       user: userId,
       landline: formData.number,
-      company : formData.company,
+      company: formData.company,
       speed: formData.speed,
       amount: formData.amount,
       email: formData.email,
       date: formData.date,
 
-      
+
 
     })
     await newNumber.save();
-res.status(201).json({ message: "تم حفظ الرقم بنجاح" });
+    res.status(201).json({ message: "تم حفظ الرقم بنجاح" });
 
-}catch(err){
-  console.error("❌ خطأ أثناء حفظ الرقم:", err);
-  res.status(500).json({ message: "حدث خطأ أثناء العملية" });
-}
+  } catch (err) {
+    console.error("❌ خطأ أثناء حفظ الرقم:", err);
+    res.status(500).json({ message: "حدث خطأ أثناء العملية" });
+  }
 }
 
 )
 
 
-router.get('/save-number' , async(req,res)=>{
+router.get('/save-number', async (req, res) => {
   const email = req.query
-  try{
-  const payment = await saveNumber.find(email)
-  res.status(201).json(payment)
-}catch{
-  res.status(401).json("error")
+  try {
+    const payment = await saveNumber.find(email)
+    res.status(201).json(payment)
+  } catch {
+    res.status(401).json("error")
 
-}
+  }
 })
 
 
-router.post('/pay-selected' ,authMiddleware ,async(req,res)=>{
-  try{
+router.post('/pay-selected', authMiddleware, async (req, res) => {
+  try {
     const userId = req.user.id
-    const { email , selectedData } = req.body
+    const { email, selectedData } = req.body
     console.log(req.body)
 
     if (!Array.isArray(selectedData) || selectedData.length === 0) {
@@ -155,10 +157,10 @@ router.post('/pay-selected' ,authMiddleware ,async(req,res)=>{
     if (user.balance < totalAmount) {
       return res.status(400).json({ message: "الرصيد غير كافٍ لإتمام العملية" });
     }
-    
+
     // خصم الرصيد
     user.balance -= totalAmount;
-    await user.save();  
+    await user.save();
 
     const created = await Payment.insertMany(docsToCreate, { ordered: false });
 
@@ -170,42 +172,42 @@ router.post('/pay-selected' ,authMiddleware ,async(req,res)=>{
     }
 
     return res.status(201).json({ message: "تم إنشاء المدفوعات", count: created.length, payments: created });
-  }catch(err){
+  } catch (err) {
     res.status(401).json(err)
   }
 })
 
 
-router.put('/save-number/:id', authMiddleware, async (req,res)=>{
+router.put('/save-number/:id', authMiddleware, async (req, res) => {
   const id = req.params.id
-  const {landline ,company , date , amount} = req.body
-  try{
-  const updatePayment = await saveNumber.findByIdAndUpdate(
-    id,
-    {
-      landline : landline,
-      company : company,
-      amount : amount,
-      date:date,
+  const { landline, company, date, amount } = req.body
+  try {
+    const updatePayment = await saveNumber.findByIdAndUpdate(
+      id,
+      {
+        landline: landline,
+        company: company,
+        amount: amount,
+        date: date,
 
-    },
-    {new : true}
+      },
+      { new: true }
 
-  )
-res.status(201).json("done")
-}catch(err){
-  res.status(401).json(err)
-}
+    )
+    res.status(201).json("done")
+  } catch (err) {
+    res.status(401).json(err)
+  }
 
 })
 
 
-router.delete('/save-number/:id' , authMiddleware , async(req,res)=>{
+router.delete('/save-number/:id', authMiddleware, async (req, res) => {
   const id = req.params.id
-  try{
+  try {
     await saveNumber.findByIdAndDelete(id)
     res.status(201).json("done")
-  }catch(err){
+  } catch (err) {
     res.status(401).json(err)
   }
 })
