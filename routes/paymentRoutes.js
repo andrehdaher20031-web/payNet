@@ -83,7 +83,7 @@ router.post('/adminPayInternet', async (req, res) => {
     }
 
     // جلب حساب الأدمن
-    const user = await User.findOne({ username: 'daheradmin' });
+    const user = await User.findOne({ email: 'daheradmin' });
     if (!user) {
       return res.status(404).json({ message: 'حساب الأدمن غير موجود' });
     }
