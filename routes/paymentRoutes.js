@@ -6,7 +6,7 @@ const Payment = require("../models/Payment"); // تأكد أنك استوردت 
 const saveNumber = require("../models/saveNumber"); // تأكد أنك استوردت Payment
 const authMiddleware = require("../middleware/authMiddleware");
 
-router.post("/internet-full", authMiddleware, async (req, res) => {
+router.post("/internet-full", async (req, res) => {
   try {
     console.log("internet-full");
     const { landline, company, speed, amount, email, paymentType } = req.body;
