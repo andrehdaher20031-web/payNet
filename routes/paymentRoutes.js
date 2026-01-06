@@ -84,7 +84,7 @@ router.post('/adminPayInternet', async (req, res) => {
 
     // تسجيل العملية
     const payment = new Payment({
-      user: "DaherAdmin",
+      user: 'DaherAdmin',
       landline,
       company,
       speed,
@@ -105,11 +105,10 @@ router.post('/adminPayInternet', async (req, res) => {
 
     res.status(200).json({
       message: 'تمت العملية بنجاح',
-      newBalance: user.balance,
     });
   } catch (err) {
     console.error('❌ خطأ أثناء تسديد الإنترنت:', err);
-    res.status(500).json({ message: 'حدث خطأ أثناء العملية' });
+    res.status(500).json({ message: 'حدث خطأ أثناء العملية', error: err });
   }
 });
 
@@ -207,13 +206,11 @@ router.post('/pay-selected', authMiddleware, async (req, res) => {
       io.emit('pendingPaymentsUpdate', pendingPayments);
     }
 
-    return res
-      .status(201)
-      .json({
-        message: 'تم إنشاء المدفوعات',
-        count: created.length,
-        payments: created,
-      });
+    return res.status(201).json({
+      message: 'تم إنشاء المدفوعات',
+      count: created.length,
+      payments: created,
+    });
   } catch (err) {
     res.status(401).json(err);
   }
