@@ -84,7 +84,7 @@ router.post('/adminPayInternet', async (req, res) => {
 
     // تسجيل العملية
     const payment = new Payment({
-      user: userId,
+      user: "DaherAdmin",
       landline,
       company,
       speed,
