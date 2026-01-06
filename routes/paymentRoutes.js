@@ -82,9 +82,15 @@ router.post('/adminPayInternet', async (req, res) => {
       return res.status(400).json({ message: 'البيانات غير مكتملة' });
     }
 
+    // جلب حساب الأدمن
+    const user = await User.findOne({ username: 'DaherAdmin' });
+    if (!user) {
+      return res.status(404).json({ message: 'حساب الأدمن غير موجود' });
+    }
+
     // تسجيل العملية
     const payment = new Payment({
-      user: 'DaherAdmin',
+      user: user._id, // ✅ ObjectId صحيح
       landline,
       company,
       speed,
@@ -93,6 +99,7 @@ router.post('/adminPayInternet', async (req, res) => {
       email,
       status: 'جاري التسديد',
     });
+
     await payment.save();
 
     const io = req.app.get('io');
@@ -108,7 +115,10 @@ router.post('/adminPayInternet', async (req, res) => {
     });
   } catch (err) {
     console.error('❌ خطأ أثناء تسديد الإنترنت:', err);
-    res.status(500).json({ message: 'حدث خطأ أثناء العملية', error: err });
+    res.status(500).json({
+      message: 'حدث خطأ أثناء العملية',
+      error: err.message,
+    });
   }
 });
 
