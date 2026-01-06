@@ -1,31 +1,31 @@
 // routes/paymentRoutes.js
-const express = require("express");
+const express = require('express');
 const router = express.Router();
-const User = require("../models/User");
-const Payment = require("../models/Payment"); // تأكد أنك استوردت Payment
-const saveNumber = require("../models/saveNumber"); // تأكد أنك استوردت Payment
-const authMiddleware = require("../middleware/authMiddleware");
+const User = require('../models/User');
+const Payment = require('../models/Payment'); // تأكد أنك استوردت Payment
+const saveNumber = require('../models/saveNumber'); // تأكد أنك استوردت Payment
+const authMiddleware = require('../middleware/authMiddleware');
 
-router.post("/internet-full", async (req, res) => {
+router.post('/internet-full', authMiddleware, async (req, res) => {
   try {
-    console.log("internet-full");
+    console.log('internet-full');
     const { landline, company, speed, amount, email, paymentType } = req.body;
     const userId = req.user.id;
 
     if (!landline || !company || !speed || !amount) {
-      return res.status(400).json({ message: "البيانات غير مكتملة" });
+      return res.status(400).json({ message: 'البيانات غير مكتملة' });
     }
 
     const user = await User.findById(userId);
     if (!user) {
-      return res.status(404).json({ message: "المستخدم غير موجود" });
+      return res.status(404).json({ message: 'المستخدم غير موجود' });
     }
 
-    const isAdmin = email && email.includes('daheradmin')
+    const isAdmin = email && email.includes('daheradmin');
     const amountToDeduct = parseFloat((amount * 1.05).toFixed(2));
     if (!isAdmin) {
       if (user.balance < amountToDeduct) {
-        return res.status(400).json({ message: "الرصيد غير كافٍ" });
+        return res.status(400).json({ message: 'الرصيد غير كافٍ' });
       }
     }
     // 💡 تحقق من التكرار: هل تم تنفيذ نفس الطلب خلال آخر دقيقة؟
@@ -36,9 +36,8 @@ router.post("/internet-full", async (req, res) => {
       speed,
       amount,
       email,
-      createdAt: { $gt: new Date(Date.now() - 60 * 1000) }
+      createdAt: { $gt: new Date(Date.now() - 60 * 1000) },
     });
-
 
     // خصم الرصيد
     user.balance -= amountToDeduct;
@@ -53,36 +52,72 @@ router.post("/internet-full", async (req, res) => {
       amount,
       paymentType,
       email,
-      status: "جاري التسديد",
+      status: 'جاري التسديد',
     });
     await payment.save();
 
-    const io = req.app.get("io");
+    const io = req.app.get('io');
     if (io) {
-      const pendingPayments = await Payment.find({ status: { $in: ["جاري التسديد", "بدء التسديد"] } });
-      io.emit("pendingPaymentsUpdate", pendingPayments);
+      const pendingPayments = await Payment.find({
+        status: { $in: ['جاري التسديد', 'بدء التسديد'] },
+      });
+      io.emit('pendingPaymentsUpdate', pendingPayments);
     }
 
-
     res.status(200).json({
-      message: "تمت العملية بنجاح",
+      message: 'تمت العملية بنجاح',
       newBalance: user.balance,
     });
-
   } catch (err) {
-    console.error("❌ خطأ أثناء تسديد الإنترنت:", err);
-    res.status(500).json({ message: "حدث خطأ أثناء العملية" });
+    console.error('❌ خطأ أثناء تسديد الإنترنت:', err);
+    res.status(500).json({ message: 'حدث خطأ أثناء العملية' });
   }
 });
 
-
-router.post("/save-number", authMiddleware, async (req, res) => {
+router.post('/adminPayInternet', async (req, res) => {
   try {
+    const { landline, company, speed, amount, email, paymentType } = req.body;
 
+    if (!landline || !company || !speed || !amount) {
+      return res.status(400).json({ message: 'البيانات غير مكتملة' });
+    }
 
-    const formData = req.body
-    console.log(formData)
-    const userId = req.user.id
+    // تسجيل العملية
+    const payment = new Payment({
+      user: userId,
+      landline,
+      company,
+      speed,
+      amount,
+      paymentType,
+      email,
+      status: 'جاري التسديد',
+    });
+    await payment.save();
+
+    const io = req.app.get('io');
+    if (io) {
+      const pendingPayments = await Payment.find({
+        status: { $in: ['جاري التسديد', 'بدء التسديد'] },
+      });
+      io.emit('pendingPaymentsUpdate', pendingPayments);
+    }
+
+    res.status(200).json({
+      message: 'تمت العملية بنجاح',
+      newBalance: user.balance,
+    });
+  } catch (err) {
+    console.error('❌ خطأ أثناء تسديد الإنترنت:', err);
+    res.status(500).json({ message: 'حدث خطأ أثناء العملية' });
+  }
+});
+
+router.post('/save-number', authMiddleware, async (req, res) => {
+  try {
+    const formData = req.body;
+    console.log(formData);
+    const userId = req.user.id;
     const newNumber = new saveNumber({
       user: userId,
       landline: formData.number,
@@ -91,71 +126,70 @@ router.post("/save-number", authMiddleware, async (req, res) => {
       amount: formData.amount,
       email: formData.email,
       date: formData.date,
-
-
-
-    })
+    });
     await newNumber.save();
-    res.status(201).json({ message: "تم حفظ الرقم بنجاح" });
-
+    res.status(201).json({ message: 'تم حفظ الرقم بنجاح' });
   } catch (err) {
-    console.error("❌ خطأ أثناء حفظ الرقم:", err);
-    res.status(500).json({ message: "حدث خطأ أثناء العملية" });
+    console.error('❌ خطأ أثناء حفظ الرقم:', err);
+    res.status(500).json({ message: 'حدث خطأ أثناء العملية' });
   }
-}
-
-)
-
+});
 
 router.get('/save-number', async (req, res) => {
-  const email = req.query
+  const email = req.query;
   try {
-    const payment = await saveNumber.find(email)
-    res.status(201).json(payment)
+    const payment = await saveNumber.find(email);
+    res.status(201).json(payment);
   } catch {
-    res.status(401).json("error")
-
+    res.status(401).json('error');
   }
-})
-
+});
 
 router.post('/pay-selected', authMiddleware, async (req, res) => {
   try {
-    const userId = req.user.id
-    const { email, selectedData } = req.body
-    console.log(req.body)
+    const userId = req.user.id;
+    const { email, selectedData } = req.body;
+    console.log(req.body);
 
     if (!Array.isArray(selectedData) || selectedData.length === 0) {
-      return res.status(400).json({ message: "selectedData يجب أن تكون مصفوفة غير فارغة" });
+      return res
+        .status(400)
+        .json({ message: 'selectedData يجب أن تكون مصفوفة غير فارغة' });
     }
 
     // selectedData: مصفوفة كائنات محفوظة تحتوي على بيانات الرقم
-    const docsToCreate = selectedData.map((item) => ({
-      user: userId,
-      landline: item?.landline != null ? String(item.landline) : undefined,
-      company: item?.company,
-      speed: item?.speed,
-      email: item?.email ?? email ?? "",
-      amount: item?.amount,
-      paymentType: item?.paymentType ?? "cash",
-      status: "جاري التسديد"
-    })).filter(doc => !!doc.landline);
+    const docsToCreate = selectedData
+      .map((item) => ({
+        user: userId,
+        landline: item?.landline != null ? String(item.landline) : undefined,
+        company: item?.company,
+        speed: item?.speed,
+        email: item?.email ?? email ?? '',
+        amount: item?.amount,
+        paymentType: item?.paymentType ?? 'cash',
+        status: 'جاري التسديد',
+      }))
+      .filter((doc) => !!doc.landline);
 
     if (docsToCreate.length === 0) {
-      return res.status(400).json({ message: "لا توجد عناصر صالحة للإنشاء (landline مفقود)" });
+      return res
+        .status(400)
+        .json({ message: 'لا توجد عناصر صالحة للإنشاء (landline مفقود)' });
     }
     let totalAmount = 0;
-    docsToCreate.forEach(doc => {
+    docsToCreate.forEach((doc) => {
       totalAmount += parseFloat((doc.amount * 1.05).toFixed(2));
     });
 
     const user = await User.findById(userId);
     if (!user) {
-      return res.status(404).json({ message: "المستخدم غير موجود" });
+      return res.status(404).json({ message: 'المستخدم غير موجود' });
     }
 
     if (user.balance < totalAmount) {
-      return res.status(400).json({ message: "الرصيد غير كافٍ لإتمام العملية" });
+      return res
+        .status(400)
+        .json({ message: 'الرصيد غير كافٍ لإتمام العملية' });
     }
 
     // خصم الرصيد
@@ -165,22 +199,29 @@ router.post('/pay-selected', authMiddleware, async (req, res) => {
     const created = await Payment.insertMany(docsToCreate, { ordered: false });
 
     // تحديث قائمة العمليات المعلقة عبر Socket.IO إن وجدت
-    const io = req.app.get("io");
+    const io = req.app.get('io');
     if (io) {
-      const pendingPayments = await Payment.find({ status: { $in: ["جاري التسديد", "بدء التسديد"] } });
-      io.emit("pendingPaymentsUpdate", pendingPayments);
+      const pendingPayments = await Payment.find({
+        status: { $in: ['جاري التسديد', 'بدء التسديد'] },
+      });
+      io.emit('pendingPaymentsUpdate', pendingPayments);
     }
 
-    return res.status(201).json({ message: "تم إنشاء المدفوعات", count: created.length, payments: created });
+    return res
+      .status(201)
+      .json({
+        message: 'تم إنشاء المدفوعات',
+        count: created.length,
+        payments: created,
+      });
   } catch (err) {
-    res.status(401).json(err)
+    res.status(401).json(err);
   }
-})
-
+});
 
 router.put('/save-number/:id', authMiddleware, async (req, res) => {
-  const id = req.params.id
-  const { landline, company, date, amount } = req.body
+  const id = req.params.id;
+  const { landline, company, date, amount } = req.body;
   try {
     const updatePayment = await saveNumber.findByIdAndUpdate(
       id,
@@ -189,26 +230,22 @@ router.put('/save-number/:id', authMiddleware, async (req, res) => {
         company: company,
         amount: amount,
         date: date,
-
       },
       { new: true }
-
-    )
-    res.status(201).json("done")
+    );
+    res.status(201).json('done');
   } catch (err) {
-    res.status(401).json(err)
+    res.status(401).json(err);
   }
-
-})
-
+});
 
 router.delete('/save-number/:id', authMiddleware, async (req, res) => {
-  const id = req.params.id
+  const id = req.params.id;
   try {
-    await saveNumber.findByIdAndDelete(id)
-    res.status(201).json("done")
+    await saveNumber.findByIdAndDelete(id);
+    res.status(201).json('done');
   } catch (err) {
-    res.status(401).json(err)
+    res.status(401).json(err);
   }
-})
+});
 module.exports = router;
