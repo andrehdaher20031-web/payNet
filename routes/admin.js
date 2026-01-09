@@ -111,7 +111,7 @@ router.put('/payment/:id', async (req, res) => {
   }
 });
 
-router.get('/user/allconfirmed', async (req, res) => {
+router.get('/user/allconfirmed', authMiddleware, async (req, res) => {
   try {
     const payments = await InternetPayment.find({
       status: { $in: ['تم التسديد', 'غير مسددة'] },
@@ -204,7 +204,7 @@ router.post('/reject/:id', async (req, res) => {
 });
 
 //جلب جميع المستخدمين
-router.get('/all-user', async (req, res) => {
+router.get('/all-user', authMiddleware, async (req, res) => {
   const allUser = await User.find();
   try {
     res.status(201).json(allUser);
@@ -277,7 +277,7 @@ router.delete('/delete/:id', async (req, res) => {
   }
 });
 
-router.get('/user/:id', async (req, res) => {
+router.get('/user/:id', authMiddleware, async (req, res) => {
   const id = req.params.id;
   try {
     const updateUser = await User.findById(id);
@@ -331,7 +331,7 @@ router.get('/astalam', (req, res) => {
   res.status(200).json(fatoraDataMap[email]);
 });
 
-router.get('/daen', async (req, res) => {
+router.get('/daen', authMiddleware, async (req, res) => {
   try {
     const daenBalance = await Balance.find({ status: false });
     res.status(201).json(daenBalance);
@@ -372,7 +372,7 @@ router.post('/confirm-daen', async (req, res) => {
   }
 });
 
-router.get('/payments/bydate', async (req, res) => {
+router.get('/payments/bydate', authMiddleware, async (req, res) => {
   try {
     // استلام التاريخين من الفرونت
     const { fromDate, toDate } = req.query;
