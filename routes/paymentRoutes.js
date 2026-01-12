@@ -8,7 +8,7 @@ const authMiddleware = require("../middleware/authMiddleware");
 
 router.post("/internet-full", authMiddleware, async (req, res) => {
   try {
-    console.log("internet-full");
+  
     const { landline, company, speed, amount, email, paymentType } = req.body;
     const userId = req.user.id;
 

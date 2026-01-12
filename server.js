@@ -3,6 +3,7 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 require('dotenv').config();
 const saveBalanceRoutes = require("./routes/saveBalance");
+const invoiceRoutes = require("./routes/invoice");
 const adminRoutes = require("./routes/admin");
 const point = require("./routes/point");
 const http = require('http'); // جديد
@@ -65,6 +66,7 @@ app.use("/api/user", require("./routes/userRoutes"));
 
 //عملية التسديد
 app.use("/api/payment", require("./routes/paymentRoutes"));
+app.use("/api/invoice", invoiceRoutes);
 
 // حفظ عملية التسديد في قاعدة البيانات
 

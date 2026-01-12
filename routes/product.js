@@ -101,6 +101,32 @@ router.put('/update-product/:id', async (req, res) => {
 
 });
 
+router.get('/search-product', async (req, res) => {
+  try {
+
+    const { name } = req.query;
+
+
+
+
+    const products = await Product.find({
+      $or: [
+        { name: { $regex: name, $options: 'i' } },
+        { description: { $regex: name, $options: 'i' } },
+        { category: { $regex: name, $options: 'i' } },
+
+      ]
+    });
+    res.status(200).json(products);
+
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({
+      message: "حدث خطأ أثناء البحث عن المنتجات",
+    });
+  }
+});
+
 
 
 module.exports = router;
