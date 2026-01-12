@@ -2,11 +2,6 @@
 const jwt = require('jsonwebtoken');
 
 const authMiddleware = (req, res, next) => {
-  if (req.headers['x-internal-request'] === 'true') {
-    req.user = { id: null, role: 'system' };
-    return next();
-  }
-
   const authHeader = req.headers.authorization;
 
   if (!authHeader || !authHeader.startsWith('Bearer ')) {
