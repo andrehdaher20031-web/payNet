@@ -403,7 +403,6 @@ router.get('/payments/bydate', authMiddleware, async (req, res) => {
     res.status(500).json({ message: 'حدث خطأ في الخادم' });
   }
 });
-
 router.get('/report/balanceNeed', async (req, res) => {
   try {
     const { fromDate, toDate } = req.query;
@@ -443,6 +442,10 @@ router.get('/report/balanceNeed', async (req, res) => {
     const end = new Date(toDate);
     end.setHours(23, 59, 59, 999);
 
+    // حساب عدد الأيام بين التاريخين
+    const MS_PER_DAY = 1000 * 60 * 60 * 24;
+    const totalDays = Math.ceil((end - start) / MS_PER_DAY) || 1;
+
     const payments = await InternetPayment.find({
       status: 'تم التسديد',
       createdAt: { $gte: start, $lte: end },
@@ -454,6 +457,7 @@ router.get('/report/balanceNeed', async (req, res) => {
       paymentsByCompany[company] = {
         company,
         totalAmount: 0,
+        avgOnDayAmount: 0,
         count: 0,
       };
     });
@@ -465,14 +469,24 @@ router.get('/report/balanceNeed', async (req, res) => {
 
       if (!company || !paymentsByCompany[company]) return;
 
-      paymentsByCompany[company].totalAmount += payment.amount || 0;
+      const amount = payment.amount || 0;
+
+      paymentsByCompany[company].totalAmount += amount;
       paymentsByCompany[company].count += 1;
-      grandTotal += payment.amount || 0;
+      grandTotal += amount;
+    });
+
+    // حساب المتوسط اليومي لكل شركة
+    Object.values(paymentsByCompany).forEach((company) => {
+      company.avgOnDayAmount = Number(
+        (company.totalAmount / totalDays).toFixed(2)
+      );
     });
 
     res.json({
       fromDate,
       toDate,
+      totalDays,
       totalPayments: payments.length,
       grandTotal,
       companies: Object.values(paymentsByCompany),
