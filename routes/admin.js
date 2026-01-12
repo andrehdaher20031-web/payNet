@@ -404,4 +404,83 @@ router.get('/payments/bydate', authMiddleware, async (req, res) => {
   }
 });
 
+router.get('/balanceNeed', authMiddleware, async (req, res) => {
+  try {
+    const { fromDate, toDate } = req.query;
+
+    const companies = [
+      'برونت',
+      'اينت',
+      'رنت',
+      'الكم',
+      'ليما',
+      'سوا',
+      'اية',
+      'يارا',
+      'بطاقات',
+      'هايبر',
+      'ويف',
+      'امنية',
+      'فيو',
+      'ليزر',
+      'متس',
+      'سما',
+      'زاد',
+      'دنيا',
+      'هاي فاي',
+      'تكامل',
+      'لاين',
+      'الجمعية',
+    ];
+
+    if (!fromDate || !toDate) {
+      return res.status(400).json({
+        message: 'يرجى إرسال تاريخ البداية والنهاية',
+      });
+    }
+
+    const start = new Date(fromDate);
+    const end = new Date(toDate);
+    end.setHours(23, 59, 59, 999);
+
+    const payments = await InternetPayment.find({
+      status: 'تم التسديد',
+      createdAt: { $gte: start, $lte: end },
+    }).lean();
+
+    // تجهيز كائن افتراضي لكل الشركات
+    const paymentsByCompany = {};
+    companies.forEach((company) => {
+      paymentsByCompany[company] = {
+        company,
+        totalAmount: 0,
+        count: 0,
+      };
+    });
+
+    let grandTotal = 0;
+
+    payments.forEach((payment) => {
+      const company = payment.company?.trim();
+
+      if (!company || !paymentsByCompany[company]) return;
+
+      paymentsByCompany[company].totalAmount += payment.amount || 0;
+      paymentsByCompany[company].count += 1;
+      grandTotal += payment.amount || 0;
+    });
+
+    res.json({
+      fromDate,
+      toDate,
+      totalPayments: payments.length,
+      grandTotal,
+      companies: Object.values(paymentsByCompany),
+    });
+  } catch (error) {
+    console.error('فشل في جلب تقرير الأرصدة:', error);
+    res.status(500).json({ message: 'حدث خطأ في الخادم' });
+  }
+});
+
 module.exports = router; // هذا السطر مهم جداً
