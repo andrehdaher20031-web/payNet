@@ -404,7 +404,7 @@ router.get('/payments/bydate', authMiddleware, async (req, res) => {
   }
 });
 
-router.get('/balanceNeed', authMiddleware, async (req, res) => {
+router.get('/report/balanceNeed', async (req, res) => {
   try {
     const { fromDate, toDate } = req.query;
 
