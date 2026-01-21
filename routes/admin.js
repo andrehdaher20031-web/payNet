@@ -404,4 +404,100 @@ router.get('/payments/bydate', authMiddleware, async (req, res) => {
   }
 });
 
+router.get('/report/balanceNeed', async (req, res) => {
+  try {
+    const { fromDate, toDate } = req.query;
+
+    if (!fromDate || !toDate) {
+      return res
+        .status(400)
+        .json({ message: 'يرجى إرسال تاريخ البداية والنهاية' });
+    }
+
+    const start = new Date(fromDate);
+    const end = new Date(toDate);
+    end.setHours(23, 59, 59, 999);
+
+    const MS_PER_DAY = 1000 * 60 * 60 * 24;
+    const totalDays = Math.ceil((end - start) / MS_PER_DAY) || 1;
+
+    const companies = [
+      'برونت',
+      'اينت',
+      'رنت',
+      'الكم',
+      'ليما',
+      'سوا',
+      'اية',
+      'يارا',
+      'بطاقات',
+      'هايبر',
+      'ويف',
+      'امنية',
+      'فيو',
+      'ليزر',
+      'متس',
+      'سما',
+      'زاد',
+      'دنيا',
+      'هاي فاي',
+      'تكامل',
+      'لاين',
+      'الجمعية',
+    ];
+
+    const payments = await InternetPayment.find({
+      status: 'تم التسديد',
+      createdAt: { $gte: start, $lte: end },
+    }).lean();
+
+    const paymentsByCompany = {};
+    companies.forEach((company) => {
+      paymentsByCompany[company] = {
+        company,
+        totalAmount: 0,
+        avgOnDayAmount: 0,
+        count: 0,
+      };
+    });
+
+    let grandTotal = 0;
+
+    payments.forEach((payment) => {
+      const company = payment.company?.trim();
+      if (!company || !paymentsByCompany[company]) return;
+
+      // تقسيم كل مبلغ على 100 هنا
+      const amount = (payment.amount || 0) / 100;
+
+      paymentsByCompany[company].totalAmount += amount;
+      paymentsByCompany[company].count += 1;
+      grandTotal += amount;
+    });
+
+    // حساب المتوسط اليومي بعد القسمة
+    Object.values(paymentsByCompany).forEach((company) => {
+      company.avgOnDayAmount = Number(
+        (company.totalAmount / totalDays).toFixed(2)
+      );
+    });
+
+    const sortedCompanies = Object.values(paymentsByCompany).sort(
+      (a, b) => b.totalAmount - a.totalAmount
+    );
+
+    res.json({
+      fromDate,
+      toDate,
+      totalDays,
+      totalPayments: payments.length,
+      grandTotal,
+      companies: sortedCompanies,
+    });
+  } catch (error) {
+    console.error('فشل في جلب تقرير الأرصدة:', error);
+    res.status(500).json({ message: 'حدث خطأ في الخادم' });
+  }
+});
+
 module.exports = router; // هذا السطر مهم جداً
