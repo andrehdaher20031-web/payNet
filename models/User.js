@@ -16,12 +16,20 @@ const userSchema = new mongoose.Schema({
   number: {
     type: String,
   },
-  role:{
-    type:String,
-    required:true,
+  card: {
+    cardInternet: { type: Boolean, default: true },
+    cardSyriatel: { type: Boolean, default: true },
+    cardPlay: { type: Boolean, default: true },
+    cardPronet: { type: Boolean, default: false },
+    cardHifi: { type: Boolean, default: false },
+  },
+
+  role: {
+    type: String,
+    required: true,
     default: "user"
   },
-    balance: { type: Number, default: 0 }, // رصيد المشترك
+  balance: { type: Number, default: 0 }, // رصيد المشترك
 
 });
 

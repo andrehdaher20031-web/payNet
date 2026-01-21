@@ -4,7 +4,7 @@ const Product = require("../models/Product");
 const Invoice = require("../models/Invoice");
 router.post('/create-invoice', async (req, res) => {
     try {
-        const { items, total } = req.body;
+        const { items, total , customerName } = req.body;
 
         if (!items || !Array.isArray(items) || items.length === 0) {
             return res.status(400).json({ message: "البيانات غير مكتملة" });
@@ -49,7 +49,8 @@ router.post('/create-invoice', async (req, res) => {
         // 3️⃣ إنشاء الفاتورة
         const newInvoice = new Invoice({
             items: invoiceItems,
-            total
+            total,
+            customerName
         });
 
         await newInvoice.save();

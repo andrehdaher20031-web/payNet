@@ -22,14 +22,14 @@ exports.login = async (req, res) => {
     }
 
     // توليد Token
-    const token = jwt.sign({ id: user._id, email: user.email, role: user.role }, process.env.JWT_SECRET, {
+    const token = jwt.sign({ id: user._id, email: user.email, role: user.role  }, process.env.JWT_SECRET, {
       expiresIn: "7d",
     });
 
     res.json({
       message: "تم تسجيل الدخول بنجاح",
       token,
-      user: { id: user._id, email: user.email },
+      user: { id: user._id, email: user.email},
     });
   } catch (err) {
     res.status(500).json({ message: "حدث خطأ أثناء تسجيل الدخول" });

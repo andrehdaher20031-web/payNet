@@ -20,14 +20,14 @@ router.get("/balance", authMiddleware, async (req, res) => {
 router.get('/daen', authMiddleware, async (req, res) => {
   try {
     const user = await User.findById(req.user.id)
-    const balance = await Balance.find({ 
+    const balance = await Balance.find({
       status: false,
       name: user.email
-     })
-     const totalAmount = balance.reduce((sum , item)=> sum + item.amount  ,0)
-  
+    })
+    const totalAmount = balance.reduce((sum, item) => sum + item.amount, 0)
+
     if (!user) return res.status(404).json({ message: "المستخدم غير موجود" });
-    res.json({ daen : totalAmount });
+    res.json({ daen: totalAmount });
   } catch (err) {
     res.status(500).json({ message: "حدث خطأ داخلي" });
   }
@@ -59,6 +59,22 @@ router.post("/", async (req, res) => {
     res.status(201).json({ message: "تم إنشاء المستخدم بنجاح" });
   } catch (err) {
     res.status(500).json({ message: "خطأ في الخادم", error: err.message });
+  }
+});
+
+router.get("/get-user-by-email", authMiddleware, async (req, res) => {
+  try {
+    console.log(req.query);
+    const email = req.query.email;
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(404).json({ message: "المستخدم غير موجود" });
+    }
+    console.log(user.card);
+    res.json({ cardKey: user.card });
+  }
+  catch (err) {
+    res.status(500).json({ message: "حدث خطأ داخلي" });
   }
 });
 
