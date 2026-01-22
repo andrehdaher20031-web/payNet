@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const invoiceSchema = new mongoose.Schema(
   {
+
     items: [
       {
         _id: {
@@ -26,6 +27,18 @@ const invoiceSchema = new mongoose.Schema(
     total: {
       type: Number,
       required: true
+    },
+       customerName: {
+      type: String,
+      required: true
+    },
+      customerPhone: {
+      type: Number,
+      required: true
+    },
+    payment:{
+      type : Number,
+      default:0
     },
     createdAt: {
       type: Date,
