@@ -36,9 +36,18 @@ const invoiceSchema = new mongoose.Schema(
       type: Number,
       required: true
     },
-    payment:{
-      type : Number,
-      default:0
+
+    payments: [{
+      amount: { type: Number, required: true , default: 0 },
+      date: { type: Date, required: true , default: Date.now },
+      details: { type: String },
+      FormTitle: { type: String }
+
+    }],
+    paymentAmount: {
+      type: Number,
+      required: true,
+      default: 0
     },
     createdAt: {
       type: Date,
