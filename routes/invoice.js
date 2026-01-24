@@ -137,6 +137,7 @@ router.delete('/delete-bill-items/:id/delete-item/:itemId', async (req, res) => 
             const product = await Product.findById(deletedItem._id);
             if (product) {
                 product.stock += deletedItem.stock;
+
                 await product.save();
             }
         }
@@ -244,6 +245,24 @@ router.delete('/delete-payment/:id/delete-payment/:paymentId', async (req, res) 
         if (!invoice) {
             return res.status(404).json({ message: "الفاتورة غير موجودة" });
         }
+
+        const payment = invoice.payments.find(
+            p => p._id.toString() === req.params.paymentId
+        )
+        if (!payment) {
+            return res.status(404).json({ message: "الدفع غير موجود" });
+        }
+        if (payment.FormTitle === "اضافة دفعة") {
+            invoice.paymentAmount -= payment.amount;
+        } else if (payment.FormTitle === "اضافة فاتورة") {
+            invoice.paymentAmount += payment.amount;
+        }
+        
+ 
+
+
+
+
         invoice.payments = invoice.payments.filter(
             payment => payment._id.toString() !== req.params.paymentId
         );
