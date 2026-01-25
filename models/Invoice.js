@@ -17,6 +17,14 @@ const invoiceSchema = new mongoose.Schema(
           type: Number,
           required: true
         },
+          priceCost: {
+          type: Number,
+          required: true
+        },
+          priceWolesale: {
+          type: Number,
+          required: true
+        },
         stock: {
           type: Number,
           required: true,

@@ -6,6 +6,7 @@ const { route } = require("./admin");
 router.post('/create-invoice', async (req, res) => {
     try {
         const { items, total, customerName, customerPhone } = req.body;
+        console.log(req.body);
 
         if (!items || !Array.isArray(items) || items.length === 0 || !total || !customerName || !customerPhone) {
             return res.status(400).json({ message: "البيانات غير مكتملة" });
@@ -42,8 +43,10 @@ router.post('/create-invoice', async (req, res) => {
             invoiceItems.push({
                 _id: product._id,
                 name: product.name,
-                quantity: item.quantity,
-                price: product.price
+                stock: item.quantity,
+                price: product.price,
+                priceCost: product.priceCost,
+                priceWolesale: product.priceWolesale
             });
         }
         const paymentAmount = -total;
@@ -257,8 +260,8 @@ router.delete('/delete-payment/:id/delete-payment/:paymentId', async (req, res) 
         } else if (payment.FormTitle === "اضافة فاتورة") {
             invoice.paymentAmount += payment.amount;
         }
-        
- 
+
+
 
 
 

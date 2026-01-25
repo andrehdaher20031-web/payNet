@@ -7,8 +7,8 @@ const authMiddleware = require("../middleware/authMiddleware");
 router.post("/add", async (req, res) => {
   try {
     console.log(req.body)
-    const { name, price, description, category, imageUrl, stock } = req.body;
-    if (!name || !price || !description || !category || !imageUrl) {
+    const { name, price, description, category, imageUrl, stock, priceCost, priceWolesale } = req.body;
+    if (!name || !price || !description || !category || !imageUrl || !priceCost || !priceWolesale) {
       return res.status(400).json({ message: "البيانات غير مكتملة" });
     }
     const newProduct = new Product({
@@ -18,6 +18,8 @@ router.post("/add", async (req, res) => {
       category,
       imageUrl,
       stock: stock || 1,
+      priceCost,
+      priceWolesale,
     });
     await newProduct.save();
     res.status(201).json({ message: "تم إضافة المنتج بنجاح", product: newProduct });
