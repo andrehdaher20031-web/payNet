@@ -71,6 +71,8 @@ router.put('/update-product/:id', async (req, res) => {
     const {
       name,
       price,
+      priceCost,
+      priceWolesale,
       category,
       stock,
       description,
@@ -86,6 +88,8 @@ router.put('/update-product/:id', async (req, res) => {
     // تحديث القيم (مع الحفاظ على القديمة إن لم تُرسل)
     product.name = name ?? product.name;
     product.price = price ?? product.price;
+    product.priceCost = priceCost ?? product.priceCost;
+    product.priceWolesale = priceWolesale ?? product.priceWolesale;
     product.category = category ?? product.category;
     product.stock = stock ?? product.stock;
     product.description = description ?? product.description;
