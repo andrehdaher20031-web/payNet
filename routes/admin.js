@@ -6,7 +6,7 @@ const authMiddleware = require('../middleware/authMiddleware');
 const User = require('../models/User');
 const Balance = require('../models/Balance');
 
-router.get('/pending',authMiddleware, async (req, res) => {
+router.get('/pending', authMiddleware, async (req, res) => {
   const payments = await InternetPayment.find({
     status: { $in: ['جاري التسديد', 'بدء التسديد'] },
   });
@@ -178,11 +178,9 @@ router.get('/user/pending', authMiddleware, async (req, res) => {
 // routes/admin.js
 router.post('/reject/:id', async (req, res) => {
   try {
-    const { reason, email, calculatedAmount } = req.body;
-    console.log(req.body)
+    const { reason, email } = req.body;
     const paymentId = req.params.id;
     const payment = await InternetPayment.findById(paymentId)
-    console.log(payment)
 
 
     // 1. تحديث العملية إلى "غير مسددة" مع سبب
@@ -194,7 +192,7 @@ router.post('/reject/:id', async (req, res) => {
     // 2. إرجاع الرصيد للمستخدم
     const user = await User.findOne({ email });
     if (user) {
-      const Amount = calculatedAmount;
+      const Amount = payment.calculatedAmount;
       user.balance += Amount;
       await user.save();
     }
