@@ -20,6 +20,7 @@ const userSchema = new mongoose.Schema({
     cardInternet: { type: Boolean, default: true },
     cardSyriatel: { type: Boolean, default: true },
     cardPlay: { type: Boolean, default: true },
+    cardapplication: { type: Boolean, default: true },
     cardPronet: { type: Boolean, default: false },
     cardHifi: { type: Boolean, default: false },
   },

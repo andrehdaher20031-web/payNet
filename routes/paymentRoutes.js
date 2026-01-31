@@ -9,9 +9,8 @@ const authMiddleware = require('../middleware/authMiddleware');
 router.post('/internet-full', authMiddleware, async (req, res) => {
   try {
     console.log("internet-full");
-    const { landline, company, speed, amount, email, paymentType } = req.body;
+    const { landline, company, speed, amount, email, paymentType  , calculatedAmount} = req.body;
     const userId = req.user.id;
-
     if (!landline || !company || !speed || !amount) {
       return res.status(400).json({ message: 'البيانات غير مكتملة' });
     }
@@ -22,7 +21,7 @@ router.post('/internet-full', authMiddleware, async (req, res) => {
     }
 
     const isAdmin = email && email.includes('daheradmin');
-    const amountToDeduct = parseFloat((amount * 1.05).toFixed(2));
+    const amountToDeduct = calculatedAmount;
     if (!isAdmin) {
       if (user.balance < amountToDeduct) {
         return res.status(400).json({ message: 'الرصيد غير كافٍ' });
@@ -52,7 +51,9 @@ router.post('/internet-full', authMiddleware, async (req, res) => {
       amount,
       paymentType,
       email,
+      calculatedAmount,
       status: 'جاري التسديد',
+
     });
     await payment.save();
 
@@ -125,7 +126,9 @@ router.post('/adminPayInternet', async (req, res) => {
 router.post('/save-number', authMiddleware, async (req, res) => {
   try {
     const formData = req.body;
-    console.log(formData);
+    const num = Number(formData.amount)
+    calculatedAmount = num + (num * 0.05)
+    console.log(calculatedAmount);
     const userId = req.user.id;
     const newNumber = new saveNumber({
       user: userId,
@@ -135,6 +138,8 @@ router.post('/save-number', authMiddleware, async (req, res) => {
       amount: formData.amount,
       email: formData.email,
       date: formData.date,
+      calculatedAmount
+      
     });
     await newNumber.save();
     res.status(201).json({ message: 'تم حفظ الرقم بنجاح' });
