@@ -214,7 +214,7 @@ router.get('/all-user', authMiddleware, async (req, res) => {
   }
 });
 
-router.get('/getPOSBalanceReport', authMiddleware, async (req, res) => {
+router.get('/getPOSBalanceReport', async (req, res) => {
   try {
     const report = await User.aggregate([
       // ===============================
@@ -254,10 +254,40 @@ router.get('/getPOSBalanceReport', authMiddleware, async (req, res) => {
       },
 
       // ===============================
-      // الإيداعات
+      // حساب الإيداعات المؤكدة وغير المؤكدة
       // ===============================
       {
         $addFields: {
+          confirmedDeposits: {
+            $sum: {
+              $map: {
+                input: {
+                  $filter: {
+                    input: '$deposits',
+                    as: 'd',
+                    cond: { $eq: ['$$d.isConfirmed', true] },
+                  },
+                },
+                as: 'x',
+                in: '$$x.amount',
+              },
+            },
+          },
+          unconfirmedDeposits: {
+            $sum: {
+              $map: {
+                input: {
+                  $filter: {
+                    input: '$deposits',
+                    as: 'd',
+                    cond: { $eq: ['$$d.isConfirmed', false] },
+                  },
+                },
+                as: 'x',
+                in: '$$x.amount',
+              },
+            },
+          },
           totalDeposits: { $sum: '$deposits.amount' },
         },
       },
@@ -380,6 +410,8 @@ router.get('/getPOSBalanceReport', authMiddleware, async (req, res) => {
           email: 1,
           balance: 1,
           totalDeposits: 1,
+          confirmedDeposits: 1,
+          unconfirmedDeposits: 1,
           expensesPaid: 1,
           expensesUnpaid: 1,
           expensesInProgress: 1,
