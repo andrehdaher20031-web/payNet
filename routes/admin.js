@@ -214,7 +214,7 @@ router.get('/all-user', authMiddleware, async (req, res) => {
   }
 });
 
-router.get('/getPOSBalanceReport', async (req, res) => {
+router.get('/getPOSBalanceReport', authMiddleware, async (req, res) => {
   try {
     const report = await User.aggregate([
       // ===============================
