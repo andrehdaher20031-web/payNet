@@ -180,8 +180,7 @@ router.post('/reject/:id', async (req, res) => {
   try {
     const { reason, email } = req.body;
     const paymentId = req.params.id;
-    const payment = await InternetPayment.findById(paymentId)
-
+    const payment = await InternetPayment.findById(paymentId);
 
     // 1. تحديث العملية إلى "غير مسددة" مع سبب
     await InternetPayment.findByIdAndUpdate(paymentId, {
@@ -212,6 +211,221 @@ router.get('/all-user', authMiddleware, async (req, res) => {
     res.status(201).json(allUser);
   } catch (err) {
     res.status(401).json(err);
+  }
+});
+
+router.get('/getPOSBalanceReport', authMiddleware, async (req, res) => {
+  try {
+    const report = await User.aggregate([
+      // ===============================
+      // الإيداعات
+      // ===============================
+      {
+        $lookup: {
+          from: 'harams',
+          localField: '_id',
+          foreignField: 'user',
+          as: 'deposits',
+        },
+      },
+
+      // ===============================
+      // المصاريف حسب الحالة
+      // ===============================
+      {
+        $lookup: {
+          from: 'payments',
+          let: { userId: '$_id' },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ['$user', '$$userId'] },
+              },
+            },
+            {
+              $group: {
+                _id: '$status',
+                total: { $sum: '$amount' },
+              },
+            },
+          ],
+          as: 'expensesByStatus',
+        },
+      },
+
+      // ===============================
+      // حساب الإيداعات المؤكدة وغير المؤكدة
+      // ===============================
+      {
+        $addFields: {
+          confirmedDeposits: {
+            $sum: {
+              $map: {
+                input: {
+                  $filter: {
+                    input: '$deposits',
+                    as: 'd',
+                    cond: { $eq: ['$$d.isConfirmed', true] },
+                  },
+                },
+                as: 'x',
+                in: '$$x.amount',
+              },
+            },
+          },
+          unconfirmedDeposits: {
+            $sum: {
+              $map: {
+                input: {
+                  $filter: {
+                    input: '$deposits',
+                    as: 'd',
+                    cond: { $eq: ['$$d.isConfirmed', false] },
+                  },
+                },
+                as: 'x',
+                in: '$$x.amount',
+              },
+            },
+          },
+          totalDeposits: { $sum: '$deposits.amount' },
+        },
+      },
+
+      // ===============================
+      // استخراج المصاريف كأرقام فقط
+      // ===============================
+      {
+        $addFields: {
+          expensesPaid: {
+            $ifNull: [
+              {
+                $arrayElemAt: [
+                  {
+                    $map: {
+                      input: {
+                        $filter: {
+                          input: '$expensesByStatus',
+                          as: 'e',
+                          cond: { $eq: ['$$e._id', 'تم التسديد'] },
+                        },
+                      },
+                      as: 'x',
+                      in: '$$x.total',
+                    },
+                  },
+                  0,
+                ],
+              },
+              0,
+            ],
+          },
+
+          expensesUnpaid: {
+            $ifNull: [
+              {
+                $arrayElemAt: [
+                  {
+                    $map: {
+                      input: {
+                        $filter: {
+                          input: '$expensesByStatus',
+                          as: 'e',
+                          cond: { $eq: ['$$e._id', 'غير مسددة'] },
+                        },
+                      },
+                      as: 'x',
+                      in: '$$x.total',
+                    },
+                  },
+                  0,
+                ],
+              },
+              0,
+            ],
+          },
+
+          expensesInProgress: {
+            $ifNull: [
+              {
+                $arrayElemAt: [
+                  {
+                    $map: {
+                      input: {
+                        $filter: {
+                          input: '$expensesByStatus',
+                          as: 'e',
+                          cond: {
+                            $in: ['$$e._id', ['بدء التسديد', 'جاري التسديد']],
+                          },
+                        },
+                      },
+                      as: 'x',
+                      in: '$$x.total',
+                    },
+                  },
+                  0,
+                ],
+              },
+              0,
+            ],
+          },
+        },
+      },
+
+      // ===============================
+      // مجموع المصاريف
+      // ===============================
+      {
+        $addFields: {
+          totalExpenses: {
+            $add: ['$expensesPaid', '$expensesUnpaid', '$expensesInProgress'],
+          },
+        },
+      },
+
+      // ===============================
+      // الحسابات النهائية
+      // ===============================
+      {
+        $addFields: {
+          netBalance: {
+            $subtract: ['$totalDeposits', '$totalExpenses'],
+          },
+          finalBalance: {
+            $add: [
+              { $subtract: ['$totalDeposits', '$totalExpenses'] },
+              '$balance',
+            ],
+          },
+        },
+      },
+
+      // ===============================
+      // الأعمدة النهائية
+      // ===============================
+      {
+        $project: {
+          name: 1,
+          email: 1,
+          balance: 1,
+          totalDeposits: 1,
+          confirmedDeposits: 1,
+          unconfirmedDeposits: 1,
+          expensesPaid: 1,
+          expensesUnpaid: 1,
+          expensesInProgress: 1,
+          totalExpenses: 1,
+          netBalance: 1,
+          finalBalance: 1,
+        },
+      },
+    ]);
+
+    res.status(200).json(report);
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ message: 'حدث خطأ أثناء جلب التقرير' });
   }
 });
 
