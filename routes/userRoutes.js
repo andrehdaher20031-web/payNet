@@ -36,7 +36,7 @@ router.get('/daen', authMiddleware, async (req, res) => {
 
 router.post("/", async (req, res) => {
   try {
-    const { name, email, number, password, balance, role } = req.body;
+    const { name, email, number, password, balance, role, card } = req.body;
 
     // تحقق إذا كان المستخدم موجود
     const existingUser = await User.findOne({ email });
@@ -53,6 +53,7 @@ router.post("/", async (req, res) => {
       password,
       balance,
       role,
+      card,
     });
 
     await newUser.save();
