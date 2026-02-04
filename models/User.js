@@ -21,6 +21,7 @@ const userSchema = new mongoose.Schema({
     cardSyriatel: { type: Boolean, default: true },
     cardPlay: { type: Boolean, default: true },
     cardapplication: { type: Boolean, default: true },
+    usdtpay: { type: Boolean, default: true },
     cardPronet: { type: Boolean, default: false },
     cardHifi: { type: Boolean, default: false },
   },
