@@ -8,8 +8,8 @@ const authMiddleware = require('../middleware/authMiddleware');
 
 router.post('/internet-full', authMiddleware, async (req, res) => {
   try {
-    console.log("internet-full");
-    const { landline, company, speed, amount, email, paymentType  , calculatedAmount} = req.body;
+    console.log(req.body);
+    const { landline, company, speed, amount, email, paymentType, calculatedAmount } = req.body;
     const userId = req.user.id;
     if (!landline || !company || !speed || !amount) {
       return res.status(400).json({ message: 'البيانات غير مكتملة' });
@@ -139,7 +139,7 @@ router.post('/save-number', authMiddleware, async (req, res) => {
       email: formData.email,
       date: formData.date,
       calculatedAmount
-      
+
     });
     await newNumber.save();
     res.status(201).json({ message: 'تم حفظ الرقم بنجاح' });
