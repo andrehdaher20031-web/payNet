@@ -448,7 +448,7 @@ router.put('/addbatch/:id', async (req, res) => {
 
     const daenamount = balanceDaen.amountDaen;
     console.log(daenamount);
-    if (daenamount > 1000000) {
+    if (daenamount > 1200000) {
       return res
         .status(401)
         .json('لا يمكن اضافة دفعة جديدة لان المبلغ المستحق اكثر من المليون');

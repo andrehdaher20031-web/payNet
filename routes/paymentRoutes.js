@@ -8,7 +8,6 @@ const authMiddleware = require('../middleware/authMiddleware');
 
 router.post('/internet-full', authMiddleware, async (req, res) => {
   try {
-    console.log(req.body);
     const { landline, company, speed, amount, email, paymentType, calculatedAmount } = req.body;
     const userId = req.user.id;
     if (!landline || !company || !speed || !amount) {
