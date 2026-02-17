@@ -23,6 +23,7 @@ const userSchema = new mongoose.Schema({
     cardapplication: { type: Boolean, default: true },
     usdtpay: { type: Boolean, default: true },
     viewapp: { type: Boolean, default: true },
+    ai: { type: Boolean, default: true },
     cardPronet: { type: Boolean, default: false },
     cardHifi: { type: Boolean, default: false },
   },
