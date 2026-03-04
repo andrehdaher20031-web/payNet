@@ -7,6 +7,7 @@ const invoiceRoutes = require('./routes/invoice');
 const adminRoutes = require('./routes/admin');
 const point = require('./routes/point');
 const http = require('http'); // جديد
+const productOnline = require('./routes/productOnline')
 //const Product = require("./models/Product");
 const { Server } = require('socket.io'); // جديد
 
@@ -62,6 +63,7 @@ app.use('/api/user', require('./routes/userRoutes'));
 //عملية التسديد
 app.use('/api/payment', require('./routes/paymentRoutes'));
 app.use('/api/invoice', invoiceRoutes);
+app.use('/api/productonline' , productOnline)
 
 // حفظ عملية التسديد في قاعدة البيانات
 
