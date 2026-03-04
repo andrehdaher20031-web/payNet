@@ -1,45 +1,72 @@
-const express = require("express");
+const express = require('express');
 const router = express.Router();
-const Product = require("../models/Product");
-const authMiddleware = require("../middleware/authMiddleware");
+const Product = require('../models/Product');
+const authMiddleware = require('../middleware/authMiddleware');
 
 // إضافة منتج جديد
-router.post("/add", async (req, res) => {
+router.post('/add', async (req, res) => {
   try {
-    console.log(req.body)
-    const { name, price, description, category, imageUrl, stock, priceCost, priceWolesale } = req.body;
-    if (!name || !price || !description || !category || !imageUrl || !priceCost || !priceWolesale) {
-      return res.status(400).json({ message: "البيانات غير مكتملة" });
-    }
-    const newProduct = new Product({
+    const {
       name,
       price,
       description,
       category,
       imageUrl,
-      stock: stock || 1,
+      stock,
       priceCost,
       priceWolesale,
+    } = req.body;
+
+    if (
+      !name ||
+      !price ||
+      !description ||
+      !category ||
+      !imageUrl ||
+      !priceCost ||
+      !priceWolesale
+    ) {
+      return res.status(400).json({ message: 'البيانات غير مكتملة' });
+    }
+
+    const product = await Product.findOneAndUpdate(
+      { name },
+      {
+        $inc: { stock: stock || 1 },
+        $set: {
+          price,
+          priceCost,
+          priceWolesale,
+          description,
+          category,
+          imageUrl,
+        },
+      },
+      {
+        new: true,
+        upsert: true,
+      }
+    );
+
+    res.status(200).json({
+      message: 'تمت إضافة المنتج أو تحديث الكمية بنجاح',
+      product,
     });
-    await newProduct.save();
-    res.status(201).json({ message: "تم إضافة المنتج بنجاح", product: newProduct });
   } catch (error) {
-    console.error("خطأ في إضافة المنتج:", error);
-    res.status(500).json({ message: "حدث خطأ أثناء إضافة المنتج" });
+    console.error('خطأ:', error);
+    res.status(500).json({ message: 'حدث خطأ أثناء العملية' });
   }
 });
-
 
 router.get('/get-product', async (req, res) => {
   const products = await Product.find({});
   try {
-    res.status(201).json(products)
-
+    res.status(201).json(products);
   } catch (err) {
-    res.status(500).json({ message: "حدث خطأ أثناء جلب المنتجات" });
+    res.status(500).json({ message: 'حدث خطأ أثناء جلب المنتجات' });
   }
+});
 
-})
 router.delete('/delete-product/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -48,18 +75,17 @@ router.delete('/delete-product/:id', async (req, res) => {
 
     if (!deletedProduct) {
       return res.status(404).json({
-        message: 'المنتج غير موجود'
+        message: 'المنتج غير موجود',
       });
     }
 
     return res.status(200).json({
-      message: 'تم حذف المنتج بنجاح'
+      message: 'تم حذف المنتج بنجاح',
     });
-
   } catch (err) {
     console.error(err);
     return res.status(500).json({
-      message: 'حدث خطأ أثناء حذف المنتج'
+      message: 'حدث خطأ أثناء حذف المنتج',
     });
   }
 });
@@ -82,7 +108,7 @@ router.put('/update-product/:id', async (req, res) => {
     const product = await Product.findById(id);
 
     if (!product) {
-      return res.status(404).json({ message: "المنتج غير موجود" });
+      return res.status(404).json({ message: 'المنتج غير موجود' });
     }
 
     // تحديث القيم (مع الحفاظ على القديمة إن لم تُرسل)
@@ -101,38 +127,29 @@ router.put('/update-product/:id', async (req, res) => {
   } catch (error) {
     console.error(error);
     res.status(500).json({
-      message: "حدث خطأ أثناء تعديل المنتج",
+      message: 'حدث خطأ أثناء تعديل المنتج',
     });
   }
-
 });
 
 router.get('/search-product', async (req, res) => {
   try {
-
     const { name } = req.query;
-
-
-
 
     const products = await Product.find({
       $or: [
         { name: { $regex: name, $options: 'i' } },
         { description: { $regex: name, $options: 'i' } },
         { category: { $regex: name, $options: 'i' } },
-
-      ]
+      ],
     });
     res.status(200).json(products);
-
   } catch (error) {
     console.error(error);
     res.status(500).json({
-      message: "حدث خطأ أثناء البحث عن المنتجات",
+      message: 'حدث خطأ أثناء البحث عن المنتجات',
     });
   }
 });
-
-
 
 module.exports = router;
