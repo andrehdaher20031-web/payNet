@@ -8,7 +8,8 @@ const authMiddleware = require('../middleware/authMiddleware');
 
 router.post('/internet-full', authMiddleware, async (req, res) => {
   try {
-    const { landline, company, speed, amount, email, paymentType, calculatedAmount } = req.body;
+    const { landline, company, speed, amount, email, paymentType, calculatedAmount, ...extra } = req.body;
+
     const userId = req.user.id;
     if (!landline || !company || !speed || !amount) {
       return res.status(400).json({ message: 'البيانات غير مكتملة' });
@@ -35,6 +36,7 @@ router.post('/internet-full', authMiddleware, async (req, res) => {
       amount,
       email,
       createdAt: { $gt: new Date(Date.now() - 60 * 1000) },
+
     });
 
     // خصم الرصيد
@@ -52,9 +54,13 @@ router.post('/internet-full', authMiddleware, async (req, res) => {
       email,
       calculatedAmount,
       status: 'جاري التسديد',
+      extra,
+
 
     });
     await payment.save();
+
+    console.log(payment)
 
     const io = req.app.get('io');
     if (io) {
