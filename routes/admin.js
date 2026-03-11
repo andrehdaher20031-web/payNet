@@ -722,7 +722,7 @@ router.get('/report/balanceNeed', async (req, res) => {
       if (!company || !paymentsByCompany[company]) return;
 
       // تقسيم كل مبلغ على 100 هنا
-      // const amount = (payment.amount || 0) / 100;
+      const amount = payment.amount || 0;
 
       paymentsByCompany[company].totalAmount += amount;
       paymentsByCompany[company].count += 1;
