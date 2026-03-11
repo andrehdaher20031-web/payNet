@@ -429,6 +429,44 @@ router.get('/getPOSBalanceReport', authMiddleware, async (req, res) => {
   }
 });
 
+router.get('/newPosBalanceReport', async (req, res) => {
+  try {
+    const allUsers = await User.find().lean();
+
+    const allData = await Promise.all(
+      allUsers.map(async (user) => {
+        const payments = await InternetPayment.find({ user: user._id }).lean();
+        const batchPayments = await Balance.find({ user: user._id }).lean();
+
+        const totalInternet = payments.reduce(
+          (sum, p) => sum + (p.amount || 0),
+          0
+        );
+
+        const totalBatch = batchPayments.reduce(
+          (sum, b) => sum + (b.amount || 0),
+          0
+        );
+
+        return {
+          userId: user._id,
+          userName: user.name,
+          userEmail: user.email,
+          balance: user.balance,
+          totalInternet,
+          totalBatch,
+          total: totalInternet + totalBatch,
+        };
+      })
+    );
+
+    res.json(allData);
+  } catch (error) {
+    console.error('فشل في جلب التقرير:', error);
+    res.status(500).json({ message: 'حدث خطأ في الخادم' });
+  }
+});
+
 router.delete('/deleteuser/:id', async (req, res) => {
   const id = req.params.id;
   try {
@@ -684,7 +722,7 @@ router.get('/report/balanceNeed', async (req, res) => {
       if (!company || !paymentsByCompany[company]) return;
 
       // تقسيم كل مبلغ على 100 هنا
-      const amount = (payment.amount || 0) / 100;
+      // const amount = (payment.amount || 0) / 100;
 
       paymentsByCompany[company].totalAmount += amount;
       paymentsByCompany[company].count += 1;
