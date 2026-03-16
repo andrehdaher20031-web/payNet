@@ -42,7 +42,6 @@ router.post('/internet-full', authMiddleware, async (req, res) => {
     // خصم الرصيد
     user.balance -= amountToDeduct;
     await user.save();
-
     // تسجيل العملية
     const payment = new Payment({
       user: userId,
@@ -54,7 +53,7 @@ router.post('/internet-full', authMiddleware, async (req, res) => {
       email,
       calculatedAmount,
       status: 'جاري التسديد',
-      extra,
+      extra
 
 
     });

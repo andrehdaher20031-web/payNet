@@ -14,7 +14,7 @@ router.get('/pending', authMiddleware, async (req, res) => {
   // إرسال التحديث عبر Socket.IO لكل العملاء
   const io = req.app.get('io');
   io.emit('pendingPaymentsUpdate', payments); // الاسم يمكن تغييره حسب الحاجة
-
+  console.log(payments)
   res.json(payments);
 });
 
