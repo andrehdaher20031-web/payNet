@@ -1,0 +1,512 @@
+[
+  {
+    "_id": "68b7e227a764e73344801ff4",
+    "username": "nn",
+    "balance": 0,
+    "owner": "نادر2",
+    "createdAt": "2025-09-03T00:00:00.000Z",
+    "email": "aa",
+    "updatedAt": "2025-09-03T00:00:00.000Z",
+    "__v": 0
+  },
+  {
+    "_id": "68b7f8e8a764e73344802167",
+    "username": "feras23",
+    "balance": 7915000,
+    "owner": "فراس منير شاهين",
+    "createdAt": "2025-09-03T00:00:00.000Z",
+    "email": "waheda56",
+    "updatedAt": "2026-04-04T08:25:35.638Z",
+    "__v": 0
+  },
+  {
+    "_id": "68b8b74ba764e73344802b99",
+    "username": "asam",
+    "balance": 15556800,
+    "owner": "عصام دلة",
+    "createdAt": "2025-09-03T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2025-11-11T17:34:38.086Z",
+    "__v": 0
+  },
+  {
+    "_id": "68b8b7eba764e73344802b9f",
+    "username": "amer",
+    "balance": 4045000,
+    "owner": "عامر حريري",
+    "createdAt": "2025-09-03T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2026-04-08T15:51:44.024Z",
+    "__v": 0
+  },
+  {
+    "_id": "68b8b81ea764e73344802ba5",
+    "username": "azher",
+    "balance": 1317000,
+    "owner": "ازهر بزنكو",
+    "createdAt": "2025-09-03T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2026-03-19T22:33:21.425Z",
+    "__v": 0
+  },
+  {
+    "_id": "68b8b846a764e73344802bab",
+    "username": "zaher",
+    "balance": 450000,
+    "owner": "زاهر قوجة",
+    "createdAt": "2025-09-03T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2025-11-23T17:32:54.298Z",
+    "__v": 0
+  },
+  {
+    "_id": "68b9441ea764e73344802d70",
+    "username": "mohamed-h",
+    "balance": 17000,
+    "owner": "محمد حلبية",
+    "createdAt": "2025-09-04T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2026-04-05T21:45:55.207Z",
+    "__v": 0
+  },
+  {
+    "_id": "68b94457a764e73344802d77",
+    "username": "sulimanmd",
+    "balance": 1117500,
+    "owner": "سليمان مدين حرفوش",
+    "createdAt": "2025-09-04T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2026-03-21T16:24:06.830Z",
+    "__v": 0
+  },
+  {
+    "_id": "68b97a43a764e73344803378",
+    "username": "mamdouh",
+    "balance": 5963050,
+    "owner": "ممدوح العجمي",
+    "createdAt": "2025-09-04T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2026-03-30T07:26:00.074Z",
+    "__v": 0
+  },
+  {
+    "_id": "68bde00b8322777a74e20262",
+    "username": "wakedha",
+    "balance": 0,
+    "owner": "واقد قره حسن",
+    "createdAt": "2025-09-07T00:00:00.000Z",
+    "email": "mostafakh",
+    "updatedAt": "2025-09-07T00:00:00.000Z",
+    "__v": 0
+  },
+  {
+    "_id": "68c064853a40efe1a5780344",
+    "username": "hosam",
+    "balance": 22900000,
+    "owner": "حسام القوس",
+    "createdAt": "2025-09-09T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2025-12-24T08:51:59.754Z",
+    "__v": 0
+  },
+  {
+    "_id": "68c064b83a40efe1a5780354",
+    "username": "feraskh",
+    "balance": 8060000,
+    "owner": "فراس خليف",
+    "createdAt": "2025-09-09T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2026-04-01T17:29:49.445Z",
+    "__v": 0
+  },
+  {
+    "_id": "68c2f6d03a40efe1a578190e",
+    "username": "waked2",
+    "balance": 4014010,
+    "owner": "واقد قره حسن",
+    "createdAt": "2025-09-11T00:00:00.000Z",
+    "email": "karnaz42",
+    "updatedAt": "2026-01-21T15:52:28.221Z",
+    "__v": 0
+  },
+  {
+    "_id": "68c3e75d3a40efe1a5781e68",
+    "username": "aaaaaaaa",
+    "balance": 23,
+    "owner": "انان",
+    "createdAt": "2025-09-12T00:00:00.000Z",
+    "email": "and",
+    "updatedAt": "2026-01-31T21:10:29.614Z",
+    "__v": 0
+  },
+  {
+    "_id": "68c95073bdfd2817e3e4e9ca",
+    "username": "omarkr",
+    "balance": 15256960,
+    "owner": "عمر احمد شعبان قرمة",
+    "createdAt": "2025-09-16T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2026-03-11T18:19:31.229Z",
+    "__v": 0
+  },
+  {
+    "_id": "68ce8c948c59cc942c10d456",
+    "username": "youseffarj",
+    "balance": 485000,
+    "owner": "يوسف مرهف فرج",
+    "createdAt": "2025-09-20T00:00:00.000Z",
+    "email": "aesa94",
+    "updatedAt": "2025-12-12T13:49:24.039Z",
+    "__v": 0
+  },
+  {
+    "_id": "68ce8ccc8c59cc942c10d45c",
+    "username": "yousefyo",
+    "balance": 2209000,
+    "owner": "يوسف حسن يوسف",
+    "createdAt": "2025-09-20T00:00:00.000Z",
+    "email": "aesa94",
+    "updatedAt": "2026-04-06T17:44:44.557Z",
+    "__v": 0
+  },
+  {
+    "_id": "68ce8ecf8c59cc942c10d46c",
+    "username": "fadihasn",
+    "balance": 0,
+    "owner": "فادي فيصل الحسن",
+    "createdAt": "2025-09-20T00:00:00.000Z",
+    "email": "aesa94",
+    "updatedAt": "2025-09-20T00:00:00.000Z",
+    "__v": 0
+  },
+  {
+    "_id": "68ce91c48c59cc942c10d4ac",
+    "username": "hosamkhador",
+    "balance": 600000,
+    "owner": "حسام الخضور",
+    "createdAt": "2025-09-20T00:00:00.000Z",
+    "email": "aesa94",
+    "updatedAt": "2025-12-01T08:13:11.900Z",
+    "__v": 0
+  },
+  {
+    "_id": "68ce93c98c59cc942c10d4d4",
+    "username": "bahazarka",
+    "balance": 1101000,
+    "owner": "بهاء احمد زرقة",
+    "createdAt": "2025-09-20T00:00:00.000Z",
+    "email": "aesa94",
+    "updatedAt": "2026-02-16T14:52:27.294Z",
+    "__v": 0
+  },
+  {
+    "_id": "68d299b4db72c66d39309b2b",
+    "username": "alirasod",
+    "balance": 103000,
+    "owner": "علي احمد رسود",
+    "createdAt": "2025-09-23T00:00:00.000Z",
+    "email": "aesa94",
+    "updatedAt": "2026-03-15T09:36:31.157Z",
+    "__v": 0
+  },
+  {
+    "_id": "68d3bd1bdb72c66d3930a27a",
+    "username": "alaasaed",
+    "balance": 0,
+    "owner": "علاء الدين ياسين السيد",
+    "createdAt": "2025-09-24T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2025-09-24T00:00:00.000Z",
+    "__v": 0
+  },
+  {
+    "_id": "68e1295747c890f0d264b0d3",
+    "username": "meran",
+    "balance": 0,
+    "owner": "ميران حيان المعلم",
+    "createdAt": "2025-10-04T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2025-10-04T00:00:00.000Z",
+    "__v": 0
+  },
+  {
+    "_id": "68e7908989915f35e2920e46",
+    "username": "emad-k",
+    "balance": 1139000,
+    "owner": "عماد الدين قبلاوي",
+    "createdAt": "2025-10-09T00:00:00.000Z",
+    "email": "mohamad-k",
+    "updatedAt": "2025-11-01T15:25:11.079Z",
+    "__v": 0
+  },
+  {
+    "_id": "68ed1c4f89915f35e2923d0d",
+    "username": "hazem-b",
+    "balance": 1992920,
+    "owner": "حازم بلال",
+    "createdAt": "2025-10-13T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2026-03-14T10:47:20.359Z",
+    "__v": 0
+  },
+  {
+    "_id": "68f344f989915f35e2927397",
+    "username": "hazem-l",
+    "balance": 873000,
+    "owner": "حازم لبابيدي",
+    "createdAt": "2025-10-18T00:00:00.000Z",
+    "email": "mohamad-k",
+    "updatedAt": "2025-11-09T10:38:15.892Z",
+    "__v": 0
+  },
+  {
+    "_id": "68f4bc9bad039c594d54a7e5",
+    "username": "wesamkh",
+    "balance": 1146000,
+    "owner": "وسام علي خليفه",
+    "createdAt": "2025-10-19T00:00:00.000Z",
+    "email": "aesa94",
+    "updatedAt": "2026-04-02T18:52:38.310Z",
+    "__v": 0
+  },
+  {
+    "_id": "6905f49774c6d210c40277a5",
+    "username": "amar-y",
+    "balance": 3167250,
+    "owner": "عمر محمد ياسر سوتل",
+    "createdAt": "2025-11-01T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2026-04-06T15:39:05.717Z",
+    "__v": 0
+  },
+  {
+    "_id": "690828958e2108da8f36943a",
+    "username": "zakrea-h",
+    "balance": 3093420,
+    "owner": "زكريا محمد اديب طه",
+    "createdAt": "2025-11-03T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2026-04-08T09:05:01.272Z",
+    "__v": 0
+  },
+  {
+    "_id": "6915c95f42020d57e8e47668",
+    "username": "mohamed-wa",
+    "balance": 3195135,
+    "owner": "محمد رياض العوير",
+    "createdAt": "2025-11-13T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2026-04-07T08:18:24.987Z",
+    "__v": 0
+  },
+  {
+    "_id": "6919f86f42020d57e8e4a005",
+    "username": "abdalrhman-ah",
+    "balance": 508500,
+    "owner": "عبدالرحمن الدالي أحمد",
+    "createdAt": "2025-11-16T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2025-12-05T20:45:15.425Z",
+    "__v": 0
+  },
+  {
+    "_id": "6919f8aa42020d57e8e4a00b",
+    "username": "omar-d2",
+    "balance": 0,
+    "owner": "عمر دلة",
+    "createdAt": "2025-11-16T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2025-11-16T00:00:00.000Z",
+    "__v": 0
+  },
+  {
+    "_id": "691c8529edcfe508949ebd43",
+    "username": "samer-sh",
+    "balance": 757425,
+    "owner": "سمير شمعة",
+    "createdAt": "2025-11-18T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2026-02-09T15:36:00.870Z",
+    "__v": 0
+  },
+  {
+    "_id": "6926df68204e776c7d50ca80",
+    "username": "abdo-arj",
+    "balance": 1460000,
+    "owner": "عبود الأعرج",
+    "createdAt": "2025-11-26T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2026-02-09T11:10:33.110Z",
+    "__v": 0
+  },
+  {
+    "_id": "69750c289f6b23d872bc7c06",
+    "username": "kefah",
+    "balance": 11000,
+    "owner": "كفاح محمد شحادة",
+    "createdAt": "2026-01-24T00:00:00.000Z",
+    "email": "aesa94",
+    "updatedAt": "2026-04-08T08:25:46.412Z",
+    "__v": 0
+  },
+  {
+    "_id": "6977a5e0a94064b22013d8ea",
+    "username": "welat",
+    "balance": 7000,
+    "owner": "ولات رستم حسن",
+    "createdAt": "2026-01-26T00:00:00.000Z",
+    "email": "neroz62",
+    "updatedAt": "2026-04-05T19:53:56.995Z",
+    "__v": 0
+  },
+  {
+    "_id": "6977c8f3a94064b22013db3b",
+    "username": "gader-n",
+    "balance": 0,
+    "owner": "جعفر تقي نصور",
+    "createdAt": "2026-01-26T00:00:00.000Z",
+    "email": "neroz62",
+    "updatedAt": "2026-01-26T00:00:00.000Z",
+    "__v": 0
+  },
+  {
+    "_id": "697b6350a94064b220142d9f",
+    "username": "adel",
+    "balance": 1980,
+    "owner": "نيو لايف - عادل قزو",
+    "createdAt": "2026-01-29T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2026-01-29T18:23:07.203Z",
+    "__v": 0
+  },
+  {
+    "_id": "697b9c89a94064b220143d08",
+    "username": "manoh",
+    "balance": 12000,
+    "owner": "منوح محسن علي",
+    "createdAt": "2026-01-29T00:00:00.000Z",
+    "email": "neroz62",
+    "updatedAt": "2026-03-20T12:52:58.697Z",
+    "__v": 0
+  },
+  {
+    "_id": "6981aee19bd9029600f3775a",
+    "username": "slman-b",
+    "balance": 7000,
+    "owner": "سلمان يوسف بيرق",
+    "createdAt": "2026-02-03T00:00:00.000Z",
+    "email": "neroz62",
+    "updatedAt": "2026-04-05T16:49:21.673Z",
+    "__v": 0
+  },
+  {
+    "_id": "6984d4d46bb8986403b69f2b",
+    "username": "nazeh-z",
+    "balance": 18000,
+    "owner": "نزيه رمضان زرقا",
+    "createdAt": "2026-02-05T00:00:00.000Z",
+    "email": "waheda56",
+    "updatedAt": "2026-04-02T18:03:41.233Z",
+    "__v": 0
+  },
+  {
+    "_id": "69850c6a6bb8986403b6a35e",
+    "username": "haditel",
+    "balance": 0,
+    "owner": "عبد الهادي سويدان",
+    "createdAt": "2026-02-05T00:00:00.000Z",
+    "email": "abdsh",
+    "updatedAt": "2026-02-05T00:00:00.000Z",
+    "__v": 0
+  },
+  {
+    "_id": "6988cedd6bb8986403b6f443",
+    "username": "wasim-a",
+    "balance": 0,
+    "owner": "وسيم معروف اسعد",
+    "createdAt": "2026-02-08T00:00:00.000Z",
+    "email": "neroz62",
+    "updatedAt": "2026-02-08T00:00:00.000Z",
+    "__v": 0
+  },
+  {
+    "_id": "698db2a86bb8986403b76131",
+    "username": "abdwahaab",
+    "balance": 2000,
+    "owner": "عبد الوهاب حيدر",
+    "createdAt": "2026-02-12T00:00:00.000Z",
+    "email": "waheda56",
+    "updatedAt": "2026-02-13T09:18:04.889Z",
+    "__v": 0
+  },
+  {
+    "_id": "698db30b6bb8986403b76141",
+    "username": "nazeh-ra",
+    "balance": 0,
+    "owner": "نزيه رمضان زرقة",
+    "createdAt": "2026-02-12T00:00:00.000Z",
+    "email": "waheda56",
+    "updatedAt": "2026-02-12T00:00:00.000Z",
+    "__v": 0
+  },
+  {
+    "_id": "698db3946bb8986403b76164",
+    "username": "adones-kh",
+    "balance": 0,
+    "owner": "ادونيس احمد خليل",
+    "createdAt": "2026-02-12T00:00:00.000Z",
+    "email": "neroz62",
+    "updatedAt": "2026-02-12T00:00:00.000Z",
+    "__v": 0
+  },
+  {
+    "_id": "698f04bf6bb8986403b77d73",
+    "username": "jaafr759",
+    "balance": 0,
+    "owner": "جعفر محمد الدق",
+    "createdAt": "2026-02-13T00:00:00.000Z",
+    "email": "neroz62",
+    "updatedAt": "2026-02-13T00:00:00.000Z",
+    "__v": 0
+  },
+  {
+    "_id": "6992b8446bb8986403b7c7db",
+    "username": "ehab-ab",
+    "balance": 3000,
+    "owner": "ايهاب صالح عباس",
+    "createdAt": "2026-02-16T00:00:00.000Z",
+    "email": "neroz62",
+    "updatedAt": "2026-02-28T12:39:55.672Z",
+    "__v": 0
+  },
+  {
+    "_id": "69a3507fcca95be5f8a516ca",
+    "username": "hosen-sh",
+    "balance": 18260,
+    "owner": "حسين عدنان شوباصي",
+    "createdAt": "2026-02-28T00:00:00.000Z",
+    "email": "taeser14",
+    "updatedAt": "2026-04-04T16:53:28.515Z",
+    "__v": 0
+  },
+  {
+    "_id": "69b289e66eb0aa7134ab5a06",
+    "username": "ghodban",
+    "balance": 2000,
+    "owner": "غضبان مصطفى عبود",
+    "createdAt": "2026-03-12T00:00:00.000Z",
+    "email": "neroz62",
+    "updatedAt": "2026-03-16T10:56:01.041Z",
+    "__v": 0
+  },
+  {
+    "_id": "69c27485f8e6e2b1e95f1ad8",
+    "username": "ghayth-a",
+    "balance": 4000,
+    "owner": "غيث ناجي علي",
+    "createdAt": "2026-03-24T00:00:00.000Z",
+    "email": "neroz62",
+    "updatedAt": "2026-03-31T13:06:23.643Z",
+    "__v": 0
+  }
+]

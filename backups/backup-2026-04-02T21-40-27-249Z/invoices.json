@@ -1,0 +1,1057 @@
+[
+  {
+    "_id": "698ec2a86bb8986403b7753d",
+    "items": [
+      {
+        "_id": "698da5396bb8986403b75f75",
+        "name": "DVR-4H-5MP",
+        "price": 50,
+        "priceCost": 42,
+        "priceWolesale": 46,
+        "stock": 1
+      },
+      {
+        "_id": "697a2595a94064b220141298",
+        "name": "Smart Dual light",
+        "price": 25,
+        "priceCost": 18,
+        "priceWolesale": 19,
+        "stock": 2
+      },
+      {
+        "_id": "698da64b6bb8986403b75f86",
+        "name": "بور 20A",
+        "price": 11,
+        "priceCost": 8.5,
+        "priceWolesale": 10,
+        "stock": 1
+      },
+      {
+        "_id": "698da58f6bb8986403b75f77",
+        "name": "HARD-1T",
+        "price": 48,
+        "priceCost": 42,
+        "priceWolesale": 45,
+        "stock": 1
+      },
+      {
+        "_id": "698da7ce6bb8986403b75fb8",
+        "name": "وصلة BNC",
+        "price": 1,
+        "priceCost": 0.5,
+        "priceWolesale": 0.6,
+        "stock": 2
+      },
+      {
+        "_id": "698da7a46bb8986403b75fb6",
+        "name": "وصلة DC",
+        "price": 1,
+        "priceCost": 0.5,
+        "priceWolesale": 0.6,
+        "stock": 2
+      }
+    ],
+    "total": 148,
+    "customerName": "محمد حبيب ",
+    "customerPhone": 0,
+    "paymentAmount": -148,
+    "payments": [],
+    "createdAt": "2026-02-13T06:20:24.840Z",
+    "updatedAt": "2026-02-13T06:20:24.840Z",
+    "__v": 0
+  },
+  {
+    "_id": "698ecbe16bb8986403b77613",
+    "items": [
+      {
+        "_id": "698d9f7c6bb8986403b75ed9",
+        "name": "هولدر ستاند كرسي قلاب",
+        "price": 2,
+        "priceCost": 0.8,
+        "priceWolesale": 1.25,
+        "stock": 1
+      },
+      {
+        "_id": "698da1636bb8986403b75f25",
+        "name": "كفر ماك سيف premium",
+        "price": 2.2,
+        "priceCost": 1.4,
+        "priceWolesale": 1.7,
+        "stock": 1
+      }
+    ],
+    "total": 4.2,
+    "customerName": "ايمي",
+    "customerPhone": 9,
+    "paymentAmount": -4.2,
+    "payments": [],
+    "createdAt": "2026-02-13T06:59:45.312Z",
+    "updatedAt": "2026-02-13T06:59:45.312Z",
+    "__v": 0
+  },
+  {
+    "_id": "698edd266bb8986403b7787b",
+    "items": [
+      {
+        "_id": "6978dd46a94064b22013f327",
+        "name": "Smart Dual light",
+        "price": 27,
+        "priceCost": 18,
+        "priceWolesale": 19,
+        "stock": 2
+      },
+      {
+        "_id": "698da5396bb8986403b75f75",
+        "name": "DVR-4H-5MP",
+        "price": 50,
+        "priceCost": 42,
+        "priceWolesale": 46,
+        "stock": 1
+      },
+      {
+        "_id": "698da64b6bb8986403b75f86",
+        "name": "بور 20A",
+        "price": 11,
+        "priceCost": 8.5,
+        "priceWolesale": 10,
+        "stock": 1
+      },
+      {
+        "_id": "698da58f6bb8986403b75f77",
+        "name": "HARD-1T",
+        "price": 48,
+        "priceCost": 42,
+        "priceWolesale": 45,
+        "stock": 1
+      },
+      {
+        "_id": "698da89b6bb8986403b75fe6",
+        "name": "بكرة كاميرا",
+        "price": 0.75,
+        "priceCost": 0.25,
+        "priceWolesale": 0.4,
+        "stock": 12
+      },
+      {
+        "_id": "698da7ce6bb8986403b75fb8",
+        "name": "وصلة BNC",
+        "price": 1,
+        "priceCost": 0.5,
+        "priceWolesale": 0.6,
+        "stock": 1
+      },
+      {
+        "_id": "698da7a46bb8986403b75fb6",
+        "name": "وصلة DC",
+        "price": 1,
+        "priceCost": 0.5,
+        "priceWolesale": 0.6,
+        "stock": 1
+      }
+    ],
+    "total": 163,
+    "customerName": "لولو يوسف سلو",
+    "customerPhone": 0,
+    "paymentAmount": -163,
+    "payments": [],
+    "createdAt": "2026-02-13T08:13:26.883Z",
+    "updatedAt": "2026-02-13T08:13:26.883Z",
+    "__v": 0
+  },
+  {
+    "_id": "698f5da76bb8986403b785f2",
+    "items": [
+      {
+        "_id": "698d9fb16bb8986403b75eee",
+        "name": "هولدر سيارة مغناطيس",
+        "price": 5.5,
+        "priceCost": 3.25,
+        "priceWolesale": 4,
+        "stock": 1
+      }
+    ],
+    "total": 5.5,
+    "customerName": "ابراهيم الشيخ موسى",
+    "customerPhone": 4738050,
+    "paymentAmount": -5.5,
+    "payments": [],
+    "createdAt": "2026-02-13T17:21:43.935Z",
+    "updatedAt": "2026-02-13T17:21:43.935Z",
+    "__v": 0
+  },
+  {
+    "_id": "698f5dd86bb8986403b785f8",
+    "items": [
+      {
+        "_id": "698d9fb16bb8986403b75eee",
+        "name": "هولدر سيارة مغناطيس",
+        "price": 5.5,
+        "priceCost": 3.25,
+        "priceWolesale": 4,
+        "stock": 1
+      }
+    ],
+    "total": 5.5,
+    "customerName": "عارف العارف",
+    "customerPhone": 0,
+    "paymentAmount": -5.5,
+    "payments": [],
+    "createdAt": "2026-02-13T17:22:32.704Z",
+    "updatedAt": "2026-02-13T17:22:32.704Z",
+    "__v": 0
+  },
+  {
+    "_id": "698f5e236bb8986403b785fd",
+    "items": [
+      {
+        "_id": "697cc623a94064b220144d48",
+        "name": "سماعة Type-c",
+        "price": 3,
+        "priceCost": 1.8,
+        "priceWolesale": 2.5,
+        "stock": 1
+      }
+    ],
+    "total": 3,
+    "customerName": "زبون",
+    "customerPhone": 0,
+    "paymentAmount": -3,
+    "payments": [],
+    "createdAt": "2026-02-13T17:23:47.591Z",
+    "updatedAt": "2026-02-13T17:23:47.591Z",
+    "__v": 0
+  },
+  {
+    "_id": "6992d6f66bb8986403b7ca8f",
+    "items": [
+      {
+        "_id": "698db0596bb8986403b7610b",
+        "name": "ربيتر cudy",
+        "price": 25,
+        "priceCost": 17,
+        "priceWolesale": 20,
+        "stock": 1
+      }
+    ],
+    "total": 25,
+    "customerName": "حبيب دومط",
+    "customerPhone": 90,
+    "paymentAmount": -25,
+    "payments": [],
+    "createdAt": "2026-02-16T08:36:06.870Z",
+    "updatedAt": "2026-02-16T08:36:06.870Z",
+    "__v": 0
+  },
+  {
+    "_id": "69944c1dcca95be5f8a3d481",
+    "items": [
+      {
+        "_id": "698daf216bb8986403b760fb",
+        "name": "صحن لايت بيم",
+        "price": 60,
+        "priceCost": 55,
+        "priceWolesale": 55,
+        "stock": 1
+      }
+    ],
+    "total": 60,
+    "customerName": "عبر",
+    "customerPhone": 9,
+    "paymentAmount": -60,
+    "payments": [],
+    "createdAt": "2026-02-17T11:08:13.055Z",
+    "updatedAt": "2026-02-17T11:08:13.055Z",
+    "__v": 0
+  },
+  {
+    "_id": "6994849bcca95be5f8a3dbb2",
+    "items": [
+      {
+        "_id": "698dabeb6bb8986403b7607b",
+        "name": "BOX TV",
+        "price": 50,
+        "priceCost": 32,
+        "priceWolesale": 37,
+        "stock": 1
+      }
+    ],
+    "total": 50,
+    "customerName": "عابر",
+    "customerPhone": 0,
+    "paymentAmount": -50,
+    "payments": [],
+    "createdAt": "2026-02-17T15:09:15.218Z",
+    "updatedAt": "2026-02-17T15:09:15.218Z",
+    "__v": 0
+  },
+  {
+    "_id": "69948599cca95be5f8a3dbce",
+    "items": [
+      {
+        "_id": "698daf216bb8986403b760fb",
+        "name": "صحن لايت بيم",
+        "price": 60,
+        "priceCost": 55,
+        "priceWolesale": 55,
+        "stock": 1
+      }
+    ],
+    "total": 60,
+    "customerName": "زبوون",
+    "customerPhone": 9,
+    "paymentAmount": -60,
+    "payments": [],
+    "createdAt": "2026-02-17T15:13:29.626Z",
+    "updatedAt": "2026-02-17T15:13:29.626Z",
+    "__v": 0
+  },
+  {
+    "_id": "69948d3fcca95be5f8a3dcc8",
+    "items": [
+      {
+        "_id": "6994881d12d62398ab789de0",
+        "name": "راوتر cude",
+        "price": 18,
+        "priceCost": 9,
+        "priceWolesale": 12,
+        "stock": 1
+      }
+    ],
+    "total": 18,
+    "customerName": "زبوون",
+    "customerPhone": 999,
+    "paymentAmount": -18,
+    "payments": [],
+    "createdAt": "2026-02-17T15:46:07.564Z",
+    "updatedAt": "2026-02-17T15:46:07.564Z",
+    "__v": 0
+  },
+  {
+    "_id": "69956d55cca95be5f8a3e88e",
+    "items": [
+      {
+        "_id": "698db0216bb8986403b76106",
+        "name": "راوتر netis",
+        "price": 12,
+        "priceCost": 10,
+        "priceWolesale": 11,
+        "stock": 1
+      }
+    ],
+    "total": 12,
+    "customerName": "عابر",
+    "customerPhone": 9,
+    "paymentAmount": -12,
+    "payments": [],
+    "createdAt": "2026-02-18T07:42:13.909Z",
+    "updatedAt": "2026-02-18T07:42:13.909Z",
+    "__v": 0
+  },
+  {
+    "_id": "6995fc4ccca95be5f8a3fae4",
+    "items": [
+      {
+        "_id": "697cc736a94064b220144d6d",
+        "name": "كفر خلفية نسائية",
+        "price": 2.2,
+        "priceCost": 0.8,
+        "priceWolesale": 1.5,
+        "stock": 1
+      }
+    ],
+    "total": 2.2,
+    "customerName": "زبونة..",
+    "customerPhone": 66,
+    "paymentAmount": -2.2,
+    "payments": [],
+    "createdAt": "2026-02-18T17:52:12.592Z",
+    "updatedAt": "2026-02-18T17:52:12.592Z",
+    "__v": 0
+  },
+  {
+    "_id": "6997473bcca95be5f8a4112e",
+    "items": [
+      {
+        "_id": "6994881d12d62398ab789de0",
+        "name": "راوتر cude",
+        "price": 18,
+        "priceCost": 9,
+        "priceWolesale": 12,
+        "stock": 1
+      }
+    ],
+    "total": 18,
+    "customerName": "كفتريا لايت",
+    "customerPhone": 0,
+    "paymentAmount": -18,
+    "payments": [],
+    "createdAt": "2026-02-19T17:24:11.581Z",
+    "updatedAt": "2026-02-19T17:24:11.581Z",
+    "__v": 0
+  },
+  {
+    "_id": "6998a5bacca95be5f8a42728",
+    "items": [
+      {
+        "_id": "697a326da94064b2201414d9",
+        "name": "Air Pods Pro",
+        "price": 9,
+        "priceCost": 3.2,
+        "priceWolesale": 5,
+        "stock": 2
+      }
+    ],
+    "total": 14,
+    "customerName": "داهود",
+    "customerPhone": 0,
+    "paymentAmount": -14,
+    "payments": [],
+    "createdAt": "2026-02-20T18:19:38.688Z",
+    "updatedAt": "2026-02-20T18:19:38.688Z",
+    "__v": 0
+  },
+  {
+    "_id": "6998a5e8cca95be5f8a42736",
+    "items": [
+      {
+        "_id": "698d9fb16bb8986403b75eee",
+        "name": "هولدر سيارة مغناطيس",
+        "price": 5.5,
+        "priceCost": 3.25,
+        "priceWolesale": 4,
+        "stock": 1
+      }
+    ],
+    "total": 5.5,
+    "customerName": "ايلي",
+    "customerPhone": 0,
+    "paymentAmount": -5.5,
+    "payments": [],
+    "createdAt": "2026-02-20T18:20:24.491Z",
+    "updatedAt": "2026-02-20T18:20:24.491Z",
+    "__v": 0
+  },
+  {
+    "_id": "699dc7afcca95be5f8a48701",
+    "items": [
+      {
+        "_id": "697cc4b4a94064b220144d3d",
+        "name": "رأس شحن 45 واط",
+        "price": 4,
+        "priceCost": 2.7,
+        "priceWolesale": 3.2,
+        "stock": 1
+      }
+    ],
+    "total": 4,
+    "customerName": "زبون",
+    "customerPhone": 0,
+    "paymentAmount": -4,
+    "payments": [],
+    "createdAt": "2026-02-24T15:45:51.480Z",
+    "updatedAt": "2026-02-24T15:45:51.480Z",
+    "__v": 0
+  },
+  {
+    "_id": "699de64bcca95be5f8a48a56",
+    "items": [
+      {
+        "_id": "698d9f7c6bb8986403b75ed9",
+        "name": "هولدر ستاند كرسي قلاب",
+        "price": 2,
+        "priceCost": 0.8,
+        "priceWolesale": 1.25,
+        "stock": 1
+      }
+    ],
+    "total": 1.56,
+    "customerName": "فادي",
+    "customerPhone": 0,
+    "paymentAmount": -1.56,
+    "payments": [],
+    "createdAt": "2026-02-24T17:56:27.913Z",
+    "updatedAt": "2026-02-24T17:56:27.913Z",
+    "__v": 0
+  },
+  {
+    "_id": "699f33fdcca95be5f8a4a27b",
+    "items": [
+      {
+        "_id": "697a3312a94064b220141527",
+        "name": "كفر سيليكون",
+        "price": 1.2,
+        "priceCost": 0.2,
+        "priceWolesale": 0.5,
+        "stock": 2
+      }
+    ],
+    "total": 1.7,
+    "customerName": "زبون",
+    "customerPhone": 0,
+    "paymentAmount": -1.7,
+    "payments": [],
+    "createdAt": "2026-02-25T17:40:13.574Z",
+    "updatedAt": "2026-02-25T17:40:13.574Z",
+    "__v": 0
+  },
+  {
+    "_id": "69a9c03afb505fa651f9a680",
+    "items": [
+      {
+        "_id": "69973f8eb89c28c48b183667",
+        "name": "ستيكرات معدن",
+        "price": 0.8,
+        "priceCost": 0.4,
+        "priceWolesale": 0.6,
+        "stock": 1
+      }
+    ],
+    "total": 0.8,
+    "customerName": "رفيق ايلي راجيل ",
+    "customerPhone": 9,
+    "paymentAmount": -0.8,
+    "payments": [],
+    "createdAt": "2026-03-05T17:41:14.922Z",
+    "updatedAt": "2026-03-05T17:41:14.922Z",
+    "__v": 0
+  },
+  {
+    "_id": "69b054672b4181f338de805c",
+    "items": [
+      {
+        "_id": "69a04ed0db00fd466b4afa63",
+        "name": "لمبدير مضيء",
+        "price": 5.5,
+        "priceCost": 3.75,
+        "priceWolesale": 4.5,
+        "stock": 1
+      }
+    ],
+    "total": 5.1,
+    "customerName": "عابر ",
+    "customerPhone": 23,
+    "paymentAmount": -5.1,
+    "payments": [],
+    "createdAt": "2026-03-10T17:27:03.650Z",
+    "updatedAt": "2026-03-10T17:27:03.650Z",
+    "__v": 0
+  },
+  {
+    "_id": "69bc27b0f8e6e2b1e95ea74a",
+    "items": [
+      {
+        "_id": "69973f8eb89c28c48b183667",
+        "name": "ستيكرات معدن",
+        "price": 0.8,
+        "priceCost": 0.4,
+        "priceWolesale": 0.6,
+        "stock": 8
+      }
+    ],
+    "total": 6.4,
+    "customerName": "موسى الابراهيم (شيحا)",
+    "customerPhone": 9,
+    "paymentAmount": -6.4,
+    "payments": [],
+    "createdAt": "2026-03-19T16:43:28.213Z",
+    "updatedAt": "2026-03-19T16:43:28.213Z",
+    "__v": 0
+  },
+  {
+    "_id": "69c1805ef8e6e2b1e95f08d3",
+    "items": [
+      {
+        "_id": "697a3312a94064b220141527",
+        "name": "كفر سيليكون",
+        "price": 1.2,
+        "priceCost": 0.2,
+        "priceWolesale": 0.5,
+        "stock": 1
+      }
+    ],
+    "total": 0.83,
+    "customerName": "شادي",
+    "customerPhone": 9,
+    "paymentAmount": -0.83,
+    "payments": [],
+    "createdAt": "2026-03-23T18:03:10.410Z",
+    "updatedAt": "2026-03-23T18:03:10.410Z",
+    "__v": 0
+  },
+  {
+    "_id": "69c29397f8e6e2b1e95f2091",
+    "items": [
+      {
+        "_id": "697a3312a94064b220141527",
+        "name": "كفر سيليكون",
+        "price": 1.2,
+        "priceCost": 0.2,
+        "priceWolesale": 0.5,
+        "stock": 7
+      }
+    ],
+    "total": 8.4,
+    "customerName": "عابر",
+    "customerPhone": 9,
+    "paymentAmount": -8.4,
+    "payments": [],
+    "createdAt": "2026-03-24T13:37:27.570Z",
+    "updatedAt": "2026-03-24T13:37:27.570Z",
+    "__v": 0
+  },
+  {
+    "_id": "69c294d3f8e6e2b1e95f20ee",
+    "items": [
+      {
+        "_id": "697cc309a94064b220144cd9",
+        "name": "وصلة M08 Type-c to Type-c",
+        "price": 2.2,
+        "priceCost": 1.2,
+        "priceWolesale": 1.7,
+        "stock": 1
+      }
+    ],
+    "total": 2.2,
+    "customerName": "زبون",
+    "customerPhone": 9,
+    "paymentAmount": -2.2,
+    "payments": [],
+    "createdAt": "2026-03-24T13:42:43.862Z",
+    "updatedAt": "2026-03-24T13:42:43.862Z",
+    "__v": 0
+  },
+  {
+    "_id": "69c29539f8e6e2b1e95f2105",
+    "items": [
+      {
+        "_id": "697cc38ba94064b220144cec",
+        "name": "وصلة Type-c  T20",
+        "price": 2,
+        "priceCost": 0.95,
+        "priceWolesale": 1.4,
+        "stock": 1
+      }
+    ],
+    "total": 2,
+    "customerName": "زبون",
+    "customerPhone": 9,
+    "paymentAmount": -2,
+    "payments": [],
+    "createdAt": "2026-03-24T13:44:25.551Z",
+    "updatedAt": "2026-03-24T13:44:25.551Z",
+    "__v": 0
+  },
+  {
+    "_id": "69c29776f8e6e2b1e95f2165",
+    "items": [
+      {
+        "_id": "697cc623a94064b220144d48",
+        "name": "سماعة Type-c",
+        "price": 3,
+        "priceCost": 1.8,
+        "priceWolesale": 2.5,
+        "stock": 1
+      }
+    ],
+    "total": 3,
+    "customerName": "زبون",
+    "customerPhone": 9,
+    "paymentAmount": -3,
+    "payments": [],
+    "createdAt": "2026-03-24T13:53:58.838Z",
+    "updatedAt": "2026-03-24T13:53:58.838Z",
+    "__v": 0
+  },
+  {
+    "_id": "69c297a3f8e6e2b1e95f216d",
+    "items": [
+      {
+        "_id": "697cc6dca94064b220144d6a",
+        "name": "سماعة عضم",
+        "price": 0.8,
+        "priceCost": 0.5,
+        "priceWolesale": 0.7,
+        "stock": 1
+      }
+    ],
+    "total": 0.8,
+    "customerName": "زبون",
+    "customerPhone": 9,
+    "paymentAmount": -0.8,
+    "payments": [],
+    "createdAt": "2026-03-24T13:54:43.818Z",
+    "updatedAt": "2026-03-24T13:54:43.818Z",
+    "__v": 0
+  },
+  {
+    "_id": "69c29810f8e6e2b1e95f2172",
+    "items": [
+      {
+        "_id": "697cc736a94064b220144d6d",
+        "name": "كفر خلفية نسائية",
+        "price": 2.2,
+        "priceCost": 0.8,
+        "priceWolesale": 1.5,
+        "stock": 1
+      }
+    ],
+    "total": 2.2,
+    "customerName": "زبون",
+    "customerPhone": 9,
+    "paymentAmount": -2.2,
+    "payments": [],
+    "createdAt": "2026-03-24T13:56:32.558Z",
+    "updatedAt": "2026-03-24T13:56:32.558Z",
+    "__v": 0
+  },
+  {
+    "_id": "69c29861f8e6e2b1e95f2180",
+    "items": [
+      {
+        "_id": "697cdce0a94064b220145112",
+        "name": "كرت ذاكرة 32 جيجا",
+        "price": 5.5,
+        "priceCost": 4.2,
+        "priceWolesale": 5,
+        "stock": 1
+      }
+    ],
+    "total": 5.5,
+    "customerName": "زبون",
+    "customerPhone": 9,
+    "paymentAmount": -5.5,
+    "payments": [],
+    "createdAt": "2026-03-24T13:57:53.530Z",
+    "updatedAt": "2026-03-24T13:57:53.530Z",
+    "__v": 0
+  },
+  {
+    "_id": "69c29b7cf8e6e2b1e95f221e",
+    "items": [
+      {
+        "_id": "698d9df06bb8986403b75ea9",
+        "name": "لصاقة بلور OG",
+        "price": 0.7,
+        "priceCost": 0.25,
+        "priceWolesale": 0.5,
+        "stock": 1
+      },
+      {
+        "_id": "698d9e306bb8986403b75eab",
+        "name": "لصاقة S",
+        "price": 1.3,
+        "priceCost": 0.8,
+        "priceWolesale": 1,
+        "stock": 1
+      }
+    ],
+    "total": 2,
+    "customerName": "زبون",
+    "customerPhone": 9,
+    "paymentAmount": -2,
+    "payments": [],
+    "createdAt": "2026-03-24T14:11:08.902Z",
+    "updatedAt": "2026-03-24T14:11:08.902Z",
+    "__v": 0
+  },
+  {
+    "_id": "69c29c80f8e6e2b1e95f2248",
+    "items": [
+      {
+        "_id": "698d9ef76bb8986403b75ece",
+        "name": "هولدر مكتبي",
+        "price": 2.5,
+        "priceCost": 1,
+        "priceWolesale": 1.5,
+        "stock": 1
+      },
+      {
+        "_id": "698d9f2c6bb8986403b75ed5",
+        "name": "كرسي معدني ثقيل",
+        "price": 2,
+        "priceCost": 0.75,
+        "priceWolesale": 1.25,
+        "stock": 3
+      },
+      {
+        "_id": "698d9f7c6bb8986403b75ed9",
+        "name": "هولدر ستاند كرسي قلاب",
+        "price": 2,
+        "priceCost": 0.8,
+        "priceWolesale": 1.25,
+        "stock": 2
+      },
+      {
+        "_id": "698d9fb16bb8986403b75eee",
+        "name": "هولدر سيارة مغناطيس",
+        "price": 5.5,
+        "priceCost": 3.25,
+        "priceWolesale": 4,
+        "stock": 1
+      }
+    ],
+    "total": 18,
+    "customerName": "زبون",
+    "customerPhone": 9,
+    "paymentAmount": -18,
+    "payments": [],
+    "createdAt": "2026-03-24T14:15:28.111Z",
+    "updatedAt": "2026-03-24T14:15:28.111Z",
+    "__v": 0
+  },
+  {
+    "_id": "69c2a582f8e6e2b1e95f23ac",
+    "items": [
+      {
+        "_id": "698da4276bb8986403b75f65",
+        "name": "سماعة لابوبو",
+        "price": 7,
+        "priceCost": 3.5,
+        "priceWolesale": 4.5,
+        "stock": 2
+      }
+    ],
+    "total": 14,
+    "customerName": "زبون",
+    "customerPhone": 9,
+    "paymentAmount": -14,
+    "payments": [],
+    "createdAt": "2026-03-24T14:53:54.677Z",
+    "updatedAt": "2026-03-24T14:53:54.677Z",
+    "__v": 0
+  },
+  {
+    "_id": "69c3e0d2f8e6e2b1e95f4214",
+    "items": [
+      {
+        "_id": "69a04ed0db00fd466b4afa63",
+        "name": "لمبدير مضيء",
+        "price": 5.5,
+        "priceCost": 3.75,
+        "priceWolesale": 4.5,
+        "stock": 10
+      },
+      {
+        "_id": "69a059cddb00fd466b4afacd",
+        "name": "كرات كريستال كبار",
+        "price": 5.5,
+        "priceCost": 3.5,
+        "priceWolesale": 4.5,
+        "stock": 5
+      }
+    ],
+    "total": 82.5,
+    "customerName": "زبون",
+    "customerPhone": 9,
+    "paymentAmount": -82.5,
+    "payments": [],
+    "createdAt": "2026-03-25T13:19:14.160Z",
+    "updatedAt": "2026-03-25T13:19:14.160Z",
+    "__v": 0
+  },
+  {
+    "_id": "69c3e160f8e6e2b1e95f4244",
+    "items": [
+      {
+        "_id": "69a05c01db00fd466b4afad9",
+        "name": "وصلة AUX",
+        "price": 1.5,
+        "priceCost": 0.75,
+        "priceWolesale": 1.2,
+        "stock": 1
+      },
+      {
+        "_id": "69a05d37db00fd466b4afade",
+        "name": "سماعة TYPE-C سمارت لايف",
+        "price": 3,
+        "priceCost": 1.5,
+        "priceWolesale": 2,
+        "stock": 2
+      }
+    ],
+    "total": 7.5,
+    "customerName": "زبون",
+    "customerPhone": 9,
+    "paymentAmount": -7.5,
+    "payments": [],
+    "createdAt": "2026-03-25T13:21:36.274Z",
+    "updatedAt": "2026-03-25T13:21:36.274Z",
+    "__v": 0
+  },
+  {
+    "_id": "69c3e16bf8e6e2b1e95f4249",
+    "items": [
+      {
+        "_id": "69a05c01db00fd466b4afad9",
+        "name": "وصلة AUX",
+        "price": 1.5,
+        "priceCost": 0.75,
+        "priceWolesale": 1.2,
+        "stock": 1
+      },
+      {
+        "_id": "69a05d37db00fd466b4afade",
+        "name": "سماعة TYPE-C سمارت لايف",
+        "price": 3,
+        "priceCost": 1.5,
+        "priceWolesale": 2,
+        "stock": 2
+      }
+    ],
+    "total": 7.5,
+    "customerName": "زبون",
+    "customerPhone": 9,
+    "paymentAmount": -7.5,
+    "payments": [],
+    "createdAt": "2026-03-25T13:21:47.252Z",
+    "updatedAt": "2026-03-25T13:21:47.252Z",
+    "__v": 0
+  },
+  {
+    "_id": "69c3e3e4f8e6e2b1e95f42be",
+    "items": [
+      {
+        "_id": "69973f8eb89c28c48b183667",
+        "name": "ستيكرات معدن",
+        "price": 0.8,
+        "priceCost": 0.4,
+        "priceWolesale": 0.6,
+        "stock": 51
+      }
+    ],
+    "total": 40.800000000000004,
+    "customerName": "زبون",
+    "customerPhone": 9,
+    "paymentAmount": -40.800000000000004,
+    "payments": [],
+    "createdAt": "2026-03-25T13:32:20.290Z",
+    "updatedAt": "2026-03-25T13:32:20.290Z",
+    "__v": 0
+  },
+  {
+    "_id": "69c421caf8e6e2b1e95f4c97",
+    "items": [
+      {
+        "_id": "697cc736a94064b220144d6d",
+        "name": "كفر خلفية نسائية",
+        "price": 2.2,
+        "priceCost": 0.8,
+        "priceWolesale": 1.5,
+        "stock": 1
+      }
+    ],
+    "total": 1.7,
+    "customerName": "زبون",
+    "customerPhone": 9,
+    "paymentAmount": -1.7,
+    "payments": [],
+    "createdAt": "2026-03-25T17:56:26.389Z",
+    "updatedAt": "2026-03-25T17:56:26.389Z",
+    "__v": 0
+  },
+  {
+    "_id": "69c7aaf4f8e6e2b1e95f9ec3",
+    "items": [
+      {
+        "_id": "69973f8eb89c28c48b183667",
+        "name": "ستيكرات معدن",
+        "price": 0.8,
+        "priceCost": 0.4,
+        "priceWolesale": 0.6,
+        "stock": 1
+      }
+    ],
+    "total": 0.8,
+    "customerName": "فراس نجار",
+    "customerPhone": 9,
+    "paymentAmount": -0.8,
+    "payments": [],
+    "createdAt": "2026-03-28T10:18:28.566Z",
+    "updatedAt": "2026-03-28T10:18:28.566Z",
+    "__v": 0
+  },
+  {
+    "_id": "69cabe43f8e6e2b1e9600404",
+    "items": [
+      {
+        "_id": "697cc402a94064b220144d2c",
+        "name": "وصلة Type-c  T10",
+        "price": 1.5,
+        "priceCost": 0.8,
+        "priceWolesale": 1.2,
+        "stock": 1
+      }
+    ],
+    "total": 1.5,
+    "customerName": "زبون",
+    "customerPhone": 9,
+    "paymentAmount": -1.5,
+    "payments": [],
+    "createdAt": "2026-03-30T18:17:39.978Z",
+    "updatedAt": "2026-03-30T18:17:39.978Z",
+    "__v": 0
+  },
+  {
+    "_id": "69cb82b8f8e6e2b1e9600fa7",
+    "items": [
+      {
+        "_id": "69973f8eb89c28c48b183667",
+        "name": "ستيكرات معدن",
+        "price": 0.8,
+        "priceCost": 0.4,
+        "priceWolesale": 0.6,
+        "stock": 1
+      }
+    ],
+    "total": 0.8,
+    "customerName": "انا سموع",
+    "customerPhone": 9,
+    "paymentAmount": -0.8,
+    "payments": [],
+    "createdAt": "2026-03-31T08:15:52.359Z",
+    "updatedAt": "2026-03-31T08:15:52.359Z",
+    "__v": 0
+  },
+  {
+    "_id": "69cbf4b3f8e6e2b1e9602899",
+    "items": [
+      {
+        "_id": "69973f8eb89c28c48b183667",
+        "name": "ستيكرات معدن",
+        "price": 0.8,
+        "priceCost": 0.4,
+        "priceWolesale": 0.6,
+        "stock": 2
+      }
+    ],
+    "total": 0.6,
+    "customerName": "زبون",
+    "customerPhone": 9,
+    "paymentAmount": -0.6,
+    "payments": [],
+    "createdAt": "2026-03-31T16:22:11.195Z",
+    "updatedAt": "2026-03-31T16:22:11.195Z",
+    "__v": 0
+  },
+  {
+    "_id": "69cd6099f8e6e2b1e9606651",
+    "items": [
+      {
+        "_id": "69a059cddb00fd466b4afacd",
+        "name": "كرات كريستال كبار",
+        "price": 5.5,
+        "priceCost": 3.5,
+        "priceWolesale": 4.5,
+        "stock": 1
+      }
+    ],
+    "total": 5.5,
+    "customerName": "مروان جمال ",
+    "customerPhone": 999,
+    "paymentAmount": -5.5,
+    "payments": [],
+    "createdAt": "2026-04-01T18:14:49.786Z",
+    "updatedAt": "2026-04-01T18:14:49.786Z",
+    "__v": 0
+  }
+]

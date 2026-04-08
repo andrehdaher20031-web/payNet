@@ -229,29 +229,30 @@ router.get('/getPOSBalanceReport', authMiddleware, async (req, res) => {
         },
       },
 
-      // ===============================
-      // المصاريف حسب الحالة
-      // ===============================
-      {
-        $lookup: {
-          from: 'payments',
-          let: { userId: '$_id' },
-          pipeline: [
-            {
-              $match: {
-                $expr: { $eq: ['$user', '$$userId'] },
+        // ===============================
+        // المصاريف حسب الحالة
+        // ===============================
+        {
+          $lookup: {
+            from: 'payments',
+            let: { userId: '$_id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ['$user', '$$userId' ]    },
+                    
+                },
               },
-            },
-            {
-              $group: {
-                _id: '$status',
-                total: { $sum: '$amount' },
+              {
+                $group: {
+                  _id: '$status',
+                  total: { $sum: '$amount' },
+                },
               },
-            },
-          ],
-          as: 'expensesByStatus',
+            ],
+            as: 'expensesByStatus',
+          },
         },
-      },
 
       // ===============================
       // حساب الإيداعات المؤكدة وغير المؤكدة

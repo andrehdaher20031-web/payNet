@@ -12,6 +12,8 @@ const productOnline = require('./routes/productOnline')
 const { Server } = require('socket.io'); // جديد
 
 const app = express();
+const PORT = Number(process.env.PORT) || 5000;
+const MONGO_URI = process.env.MONGO_URI;
 
 const server = http.createServer(app); // جديد
 const io = new Server(server, {
@@ -63,26 +65,60 @@ app.use('/api/user', require('./routes/userRoutes'));
 //عملية التسديد
 app.use('/api/payment', require('./routes/paymentRoutes'));
 app.use('/api/invoice', invoiceRoutes);
-app.use('/api/productonline' , productOnline)
+app.use('/api/productonline', productOnline)
 
 // حفظ عملية التسديد في قاعدة البيانات
 
 app.use('/api/saveBalance', saveBalanceRoutes);
 
+// Backup routes
+app.use('/api/backup', require('./routes/backup'));
+
 //ترحيل العمليات
 app.use('/api/admin', adminRoutes);
 app.use('/api/product', require('./routes/product'));
 
+mongoose.connection.on('connected', () => {
+  console.log('MongoDB connected');
+});
+
+mongoose.connection.on('error', (error) => {
+  console.error('MongoDB connection error:', error);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.warn('MongoDB disconnected');
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled promise rejection:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught exception:', error);
+  process.exit(1);
+});
+
 // Connect DB and start server
 const startServer = async () => {
+  if (!MONGO_URI) {
+    console.error('MONGO_URI is missing');
+    process.exit(1);
+  }
+
   try {
-    await mongoose.connect(process.env.MONGO_URI);
-    console.log('MongoDB connected');
-    server.listen(process.env.PORT || 5000, () => {
-      console.log(`Server running on http://localhost:${process.env.PORT}`);
+    console.log('Connecting to MongoDB...');
+    await mongoose.connect(MONGO_URI, {
+      serverSelectionTimeoutMS: 10000,
+    });
+
+    server.listen(PORT, '0.0.0.0', () => {
+      console.log(`Server running on port ${PORT}`);
     });
   } catch (err) {
-    console.error(err.message);
+    console.error('Failed to start server');
+    console.error(err);
+    process.exit(1);
   }
 };
 
