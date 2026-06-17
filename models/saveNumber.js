@@ -33,4 +33,8 @@ const saveNumberSchema = new mongoose.Schema({
 }
 });
 
+saveNumberSchema.index({ user: 1, date: -1 });
+saveNumberSchema.index({ email: 1, date: -1 });
+saveNumberSchema.index({ landline: 1 });
+
 module.exports = mongoose.model("saveNumber", saveNumberSchema);

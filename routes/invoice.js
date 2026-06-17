@@ -3,6 +3,22 @@ const router = express.Router();
 const Product = require("../models/Product");
 const Invoice = require("../models/Invoice");
 const { route } = require("./admin");
+const { cache } = require("../services/cache.service");
+const { recordInvoiceStats } = require("../services/dailyStats.service");
+const {
+    buildDateRange,
+    escapeRegex,
+    getPagination,
+    paginatedResponse,
+} = require("../utils/pagination");
+
+const INVOICE_LIST_FIELDS = "items total customerName customerPhone paymentAmount payments createdAt updatedAt";
+
+const invalidateInvoiceCache = async () => {
+    await cache.delByPrefix("invoice:");
+    await cache.delByPrefix("report:");
+};
+
 router.post('/create-invoice', async (req, res) => {
     try {
         const { items, total, customerName, customerPhone } = req.body;
@@ -62,6 +78,8 @@ router.post('/create-invoice', async (req, res) => {
 
 
         await newInvoice.save();
+        await recordInvoiceStats(newInvoice, 1);
+        await invalidateInvoiceCache();
 
         res.status(201).json({
             message: "تم إنشاء الفاتورة بنجاح",
@@ -76,8 +94,26 @@ router.post('/create-invoice', async (req, res) => {
 
 router.get('/viewBills', async (req, res) => {
     try {
-        const invoices = await Invoice.find().sort({ createdAt: -1 });
-        res.status(200).json(invoices);
+        const { page, limit, skip } = getPagination(req.query);
+        const filter = {};
+        const dateRange = buildDateRange(req.query);
+        if (dateRange) filter.createdAt = dateRange;
+        if (req.query.search) {
+            const search = new RegExp(escapeRegex(req.query.search), "i");
+            filter.$or = [{ customerName: search }];
+            const phone = Number(req.query.search);
+            if (!Number.isNaN(phone)) filter.$or.push({ customerPhone: phone });
+        }
+        const [invoices, total] = await Promise.all([
+            Invoice.find(filter)
+                .select(INVOICE_LIST_FIELDS)
+                .sort({ createdAt: -1 })
+                .skip(skip)
+                .limit(limit)
+                .lean(),
+            Invoice.countDocuments(filter),
+        ]);
+        res.status(200).json(paginatedResponse({ data: invoices, page, limit, total }));
     } catch (error) {
         console.error(error);
         res.status(500).json({ message: "خطأ في السيرفر" });
@@ -85,7 +121,7 @@ router.get('/viewBills', async (req, res) => {
 });
 router.get('/viewBills/:id', async (req, res) => {
     try {
-        const invoice = await Invoice.findById(req.params.id);
+        const invoice = await Invoice.findById(req.params.id).select(INVOICE_LIST_FIELDS).lean();
         if (!invoice) {
             return res.status(404).json({ message: "الفاتورة غير موجودة" });
         }
@@ -110,6 +146,8 @@ router.delete('/delete-bill/:id', async (req, res) => {
                 await product.save();
             }
         }
+        await recordInvoiceStats(invoice, -1);
+        await invalidateInvoiceCache();
 
         res.status(200).json({ message: "تم حذف الفاتورة بنجاح" });
     } catch (error) {
@@ -146,6 +184,7 @@ router.delete('/delete-bill-items/:id/delete-item/:itemId', async (req, res) => 
         }
 
         await invoice.save();
+        await invalidateInvoiceCache();
 
         if (invoice.items.length === 0) {
             await Invoice.findByIdAndDelete(req.params.id);
@@ -210,6 +249,7 @@ router.put('/add-bill-items/:id', async (req, res) => {
 
         }));
         await invoice.save();
+        await invalidateInvoiceCache();
         res.status(200).json({ message: "تم تعديل الفاتورة بنجاح" });
     }
     catch (error) {
@@ -234,6 +274,7 @@ router.post('/new-payment/:id', async (req, res) => {
         }
 
         await invoice.save();
+        await invalidateInvoiceCache();
         res.status(200).json({ message: "تم إضافة الدفع بنجاح" });
     } catch (error) {
         console.error(error);

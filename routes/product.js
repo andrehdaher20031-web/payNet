@@ -2,6 +2,13 @@ const express = require('express');
 const router = express.Router();
 const Product = require('../models/Product');
 const authMiddleware = require('../middleware/authMiddleware');
+const { cache, cacheKey, getOrSet } = require('../services/cache.service');
+
+const PRODUCT_FIELDS = 'name price priceCost priceWolesale description category imageUrl stock';
+
+const invalidateProductCache = async () => {
+  await cache.delByPrefix('product:');
+};
 
 // إضافة منتج جديد
 router.post('/add', async (req, res) => {
@@ -48,6 +55,7 @@ router.post('/add', async (req, res) => {
       }
     );
 
+    await invalidateProductCache();
     res.status(200).json({
       message: 'تمت إضافة المنتج أو تحديث الكمية بنجاح',
       product,
@@ -59,8 +67,10 @@ router.post('/add', async (req, res) => {
 });
 
 router.get('/get-product', async (req, res) => {
-  const products = await Product.find({});
   try {
+    const products = await getOrSet(cacheKey('product:all', req.query), 300, () =>
+      Product.find({}).select(PRODUCT_FIELDS).sort({ name: 1 }).lean()
+    );
     res.status(201).json(products);
   } catch (err) {
     res.status(500).json({ message: 'حدث خطأ أثناء جلب المنتجات' });
@@ -79,6 +89,7 @@ router.delete('/delete-product/:id', async (req, res) => {
       });
     }
 
+    await invalidateProductCache();
     return res.status(200).json({
       message: 'تم حذف المنتج بنجاح',
     });
@@ -122,6 +133,7 @@ router.put('/update-product/:id', async (req, res) => {
     product.imageUrl = imageUrl ?? product.imageUrl;
 
     const updatedProduct = await product.save();
+    await invalidateProductCache();
 
     res.status(200).json(updatedProduct);
   } catch (error) {
@@ -136,13 +148,11 @@ router.get('/search-product', async (req, res) => {
   try {
     const { name } = req.query;
 
-    const products = await Product.find({
-      $or: [
-        { name: { $regex: name, $options: 'i' } },
-        { description: { $regex: name, $options: 'i' } },
-        { category: { $regex: name, $options: 'i' } },
-      ],
-    });
+    const products = await Product.find(
+      name
+        ? { $text: { $search: name } }
+        : {}
+    ).select(PRODUCT_FIELDS).limit(50).lean();
     res.status(200).json(products);
   } catch (error) {
     console.error(error);

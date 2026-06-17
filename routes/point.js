@@ -5,6 +5,18 @@ const Point = require("../models/Point")
 const authMiddleware = require("../middleware/authMiddleware");
 const Payment = require("../models/Payment"); // تأكد أنك استوردت Payment
 const Balance = require("../models/Balance");
+const { cache } = require("../services/cache.service");
+const { getPagination, paginatedResponse } = require("../utils/pagination");
+
+const BALANCE_FIELDS = 'destination name number operator amount noticeNumber amountDaen date isConfirmed status createdAt user';
+const PAYMENT_FIELDS = 'landline company speed email amount calculatedAmount paymentType status note createdAt updatedAt user';
+
+const invalidatePointCache = async () => {
+  await cache.delByPrefix('point:');
+  await cache.delByPrefix('balance:');
+  await cache.delByPrefix('report:');
+  await cache.delByPrefix('users:');
+};
 
 
 
@@ -35,6 +47,7 @@ router.post("/add-point", async (req, res) => {
       }
     )
     await newUser.save()
+    await invalidatePointCache()
 
     res.status(201).json({ message: "تمت إضافة نقطة البيع بنجاح", newPoint });
   } catch (err) {
@@ -47,7 +60,7 @@ router.post("/add-point", async (req, res) => {
 router.get('/add-point', async (req, res) => {
   try {
     const { email } = req.query; // ✅ استخدم query وليس body
-    const FormData = await Point.find({ email });
+    const FormData = await Point.find({ email }).select('username balance owner email createdAt updatedAt').lean();
     res.status(200).json(FormData);
   } catch (err) {
     res.status(500).json({ err });
@@ -65,6 +78,7 @@ router.delete('/delete/:id', async (req, res) => {
 
     await Point.findByIdAndDelete(idDelete);
     await User.findOneAndDelete({ email: emailPoint.username });
+    await invalidatePointCache();
 
     res.status(200).json({ message: "Delete done" });
   } catch (err) {
@@ -124,6 +138,7 @@ router.put('/add-balance/:id', async (req, res) => {
     });
 
     await balanceDoc.save();
+    await invalidatePointCache();
 
     res.status(200).json({ message: "تم تعديل الرصيد بنجاح", point, user });
   } catch (err) {
@@ -136,8 +151,13 @@ router.put('/add-balance/:id', async (req, res) => {
 router.get("/all", async (req, res) => {
   try {
     const {email} = req.query
-    const payments = await Balance.find({ destination: email }).sort({ date: -1 });
-    res.json(payments);
+    const { page, limit, skip } = getPagination(req.query);
+    const filter = { destination: email };
+    const [payments, total] = await Promise.all([
+      Balance.find(filter).select(BALANCE_FIELDS).sort({ date: -1 }).skip(skip).limit(limit).lean(),
+      Balance.countDocuments(filter),
+    ]);
+    res.json(paginatedResponse({ data: payments, page, limit, total }));
   } catch (error) {
     console.error("خطأ في جلب الدفعات:", error);
     res.status(500).json({ message: "حدث خطأ في الخادم" });
@@ -147,8 +167,13 @@ router.get("/all", async (req, res) => {
 router.get("/all-point", async (req, res) => {
   try {
     const {email} = req.query;
-    const payments = await Balance.find({ name :email }).sort({ date: -1 });
-    res.json(payments);
+    const { page, limit, skip } = getPagination(req.query);
+    const filter = { name: email };
+    const [payments, total] = await Promise.all([
+      Balance.find(filter).select(BALANCE_FIELDS).sort({ date: -1 }).skip(skip).limit(limit).lean(),
+      Balance.countDocuments(filter),
+    ]);
+    res.json(paginatedResponse({ data: payments, page, limit, total }));
   } catch (error) {
     console.error("خطأ في جلب الدفعات:", error);
     res.status(500).json({ message: "حدث خطأ في الخادم" });
@@ -168,12 +193,17 @@ router.get("/user/confirmed/point", async (req, res) => {
 
     const payments = await Point.find({
       email: emailPoint,
-    });
+    }).select('username').lean();
     const paymentsPoint = payments.map(p => p.username);
 
-const finical = await Payment.find({ email: { $in: paymentsPoint } });
+const { page, limit, skip } = getPagination(req.query);
+const filter = { email: { $in: paymentsPoint } };
+const [finical, total] = await Promise.all([
+  Payment.find(filter).select(PAYMENT_FIELDS).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
+  Payment.countDocuments(filter),
+]);
 
-    res.status(201).json(finical)
+    res.status(201).json(paginatedResponse({ data: finical, page, limit, total }))
 
   } catch (error) {
     console.error("فشل في جلب عمليات المستخدم:", error);

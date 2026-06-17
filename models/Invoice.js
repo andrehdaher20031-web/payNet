@@ -65,4 +65,8 @@ const invoiceSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+invoiceSchema.index({ createdAt: -1 });
+invoiceSchema.index({ customerPhone: 1 });
+invoiceSchema.index({ customerName: 1 });
+
 module.exports = mongoose.model('Invoice', invoiceSchema);

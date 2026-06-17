@@ -2,12 +2,19 @@ const expess = require('express');
 const router = expess.Router();
 const ProductOnline = require("../models/ProductOnline");
 const midaleware = require("../middleware/auth");
+const { cache, cacheKey, getOrSet } = require("../services/cache.service");
+
+const invalidateProductOnlineCache = async () => {
+    await cache.delByPrefix("productOnline:");
+};
 
 router.get('/get-product-online', async (req, res) => {
-    const name = req.query.name
-    const products = await ProductOnline.find({ name: name });
-    const card = products.map(p => p.cards)
     try {
+        const name = req.query.name
+        const products = await getOrSet(cacheKey("productOnline:by-name", { name }), 300, () =>
+            ProductOnline.find({ name: name }).select('name type note cards').lean()
+        );
+        const card = products.map(p => p.cards)
         res.status(201).json({ card, products });
     } catch (err) {
         res.status(500).json({ message: "حدث خطأ أثناء جلب المنتجات" });
@@ -16,8 +23,10 @@ router.get('/get-product-online', async (req, res) => {
 
 router.get('/get-product-online/name', async (req, res) => {
 
-    const productName = await ProductOnline.find().select('name type note');
     try {
+        const productName = await getOrSet(cacheKey("productOnline:names", req.query), 300, () =>
+            ProductOnline.find().select('name type note').sort({ name: 1 }).lean()
+        );
         res.status(201).json({ productName });
     } catch (err) {
         res.status(500).json({ message: "حدث خطأ أثناء جلب أسماء المنتجات" });
@@ -28,7 +37,7 @@ router.get('/get-product-online/name/:id', async (req, res) => {
 
     try {
         const id = req.params.id
-        const products = await ProductOnline.findById(id)
+        const products = await ProductOnline.findById(id).select('cards').lean()
         res.status(201).json(products.cards)
 
     } catch (err) {
@@ -58,6 +67,7 @@ router.put('/update/:id', async (req, res) => {
         card.priceOnweb = data.priceOnweb
 
         await product.save()
+        await invalidateProductOnlineCache()
 
         res.json({
             message: "Product updated successfully",
@@ -81,6 +91,7 @@ router.post('/add-card/:id', async (req, res) => {
 
         productInsert.cards.push(formData)
         await productInsert.save()
+        await invalidateProductOnlineCache()
         res.status(201).json({ message: 'تم اضافة البطاقة بنجاح' })
 
 
@@ -102,6 +113,7 @@ router.delete('/delete/:id', async (req, res) => {
         }
         productDelete.cards.pull({ _id: id })
         await productDelete.save();
+        await invalidateProductOnlineCache()
 
         res.status(201).json({ message: "تم حذف البطاقة بنجاح" });
     }
@@ -144,6 +156,7 @@ router.post('/addType', async (req, res) => {
             note,
             cards: []
         });
+        await invalidateProductOnlineCache()
 
         res.status(201).json({
             message: "تم إضافة المنتج بنجاح",
