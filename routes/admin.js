@@ -57,25 +57,18 @@ const emitPendingPayments = async (req) => {
   const pendingPayments = await InternetPayment.find({ status: { $in: PENDING_STATUSES } })
     .select(PAYMENT_FIELDS)
     .sort({ createdAt: -1 })
-    .limit(100)
     .lean();
   io.emit('pendingPaymentsUpdate', pendingPayments);
 };
 
 router.get('/pending', authMiddleware, async (req, res) => {
-  const { page, limit, skip } = getPagination(req.query);
   const filter = buildPaymentFilters(req.query, { status: { $in: PENDING_STATUSES } });
-  const [payments, total] = await Promise.all([
-    InternetPayment.find(filter)
-      .select(PAYMENT_FIELDS)
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean(),
-    InternetPayment.countDocuments(filter),
-  ]);
+  const payments = await InternetPayment.find(filter)
+    .select(PAYMENT_FIELDS)
+    .sort({ createdAt: -1 })
+    .lean();
 
-  res.json(paginatedResponse({ data: payments, page, limit, total }));
+  res.json(payments);
 });
 
 router.patch('/confirm/:id', async (req, res) => {
