@@ -9,8 +9,16 @@ const { cache } = require('../services/cache.service');
 const { recordPaymentStats } = require('../services/dailyStats.service');
 
 const PAYMENT_FIELDS =
-  'landline company speed email amount calculatedAmount paymentType status note createdAt updatedAt user';
+  'landline company speed email amount calculatedAmount paymentType status note extra createdAt updatedAt user';
 const PENDING_STATUSES = ['جاري التسديد', 'بدء التسديد'];
+
+const normalizeExtra = (bodyExtra, extraFields = {}) => {
+  if (bodyExtra && typeof bodyExtra === 'object' && !Array.isArray(bodyExtra)) {
+    return { ...extraFields, ...bodyExtra };
+  }
+
+  return bodyExtra !== undefined ? bodyExtra : extraFields;
+};
 
 const invalidatePaymentCache = async () => {
   await cache.delByPrefix('payments:');
@@ -43,8 +51,10 @@ router.post('/internet-full', authMiddleware, async (req, res) => {
       email,
       paymentType,
       calculatedAmount,
-      ...extra
+      extra: bodyExtra,
+      ...extraFields
     } = req.body;
+    const extra = normalizeExtra(bodyExtra, extraFields);
 
     const userId = req.user.id;
     if (!landline || !company || !speed || !amount) {
@@ -101,6 +111,7 @@ router.post('/internet-full', authMiddleware, async (req, res) => {
     res.status(200).json({
       message: 'تمت العملية بنجاح',
       newBalance: user.balance,
+      payment,
     });
   } catch (err) {
     console.error('❌ خطأ أثناء تسديد الإنترنت:', err);
@@ -110,7 +121,18 @@ router.post('/internet-full', authMiddleware, async (req, res) => {
 
 router.post('/adminPayInternet', async (req, res) => {
   try {
-    const { landline, company, speed, amount, email, paymentType } = req.body;
+    const {
+      landline,
+      company,
+      speed,
+      amount,
+      email,
+      paymentType,
+      calculatedAmount,
+      extra: bodyExtra,
+      ...extraFields
+    } = req.body;
+    const extra = normalizeExtra(bodyExtra, extraFields);
 
     if (!landline || !company || !speed || !amount) {
       return res.status(400).json({ message: 'البيانات غير مكتملة' });
@@ -129,9 +151,11 @@ router.post('/adminPayInternet', async (req, res) => {
       company,
       speed,
       amount,
+      calculatedAmount,
       paymentType,
       email,
       status: 'جاري التسديد',
+      extra,
     });
 
     await payment.save();
@@ -214,8 +238,10 @@ router.post('/pay-selected', authMiddleware, async (req, res) => {
         speed: item?.speed,
         email: item?.email ?? email ?? '',
         amount: item?.amount,
+        calculatedAmount: item?.calculatedAmount,
         paymentType: item?.paymentType ?? 'cash',
         status: 'جاري التسديد',
+        extra: item?.extra || {},
       }))
       .filter((doc) => !!doc.landline);
 

@@ -21,7 +21,7 @@ const {
 } = require('../utils/pagination');
 
 const PAYMENT_FIELDS =
-  'landline company speed email amount calculatedAmount paymentType status note createdAt updatedAt user';
+  'landline company speed email amount calculatedAmount paymentType status note extra createdAt updatedAt user';
 const BALANCE_FIELDS =
   'destination name number operator amount noticeNumber amountDaen date isConfirmed status createdAt user';
 const USER_FIELDS = 'name email number role balance card';
