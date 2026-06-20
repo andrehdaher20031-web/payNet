@@ -215,219 +215,39 @@ router.get('/all-user', authMiddleware, async (req, res) => {
 });
 
 router.get('/getPOSBalanceReport', authMiddleware, async (req, res) => {
-  try {
-    const report = await User.aggregate([
-      // ===============================
-      // الإيداعات
-      // ===============================
-      {
-        $lookup: {
-          from: 'harams',
-          localField: '_id',
-          foreignField: 'user',
-          as: 'deposits',
-        },
-      },
+try {
+  console.log('جلب تقرير الأرصدة');
 
-        // ===============================
-        // المصاريف حسب الحالة
-        // ===============================
-        {
-          $lookup: {
-            from: 'payments',
-            let: { userId: '$_id' },
-            pipeline: [
-              {
-                $match: {
-                  $expr: { $eq: ['$user', '$$userId' ]    },
-                    
-                },
-              },
-              {
-                $group: {
-                  _id: '$status',
-                  total: { $sum: '$amount' },
-                },
-              },
-            ],
-            as: 'expensesByStatus',
-          },
-        },
+  const allUsers = await User.find().lean();
 
-      // ===============================
-      // حساب الإيداعات المؤكدة وغير المؤكدة
-      // ===============================
-      {
-        $addFields: {
-          confirmedDeposits: {
-            $sum: {
-              $map: {
-                input: {
-                  $filter: {
-                    input: '$deposits',
-                    as: 'd',
-                    cond: { $eq: ['$$d.isConfirmed', true] },
-                  },
-                },
-                as: 'x',
-                in: '$$x.amount',
-              },
-            },
-          },
-          unconfirmedDeposits: {
-            $sum: {
-              $map: {
-                input: {
-                  $filter: {
-                    input: '$deposits',
-                    as: 'd',
-                    cond: { $eq: ['$$d.isConfirmed', false] },
-                  },
-                },
-                as: 'x',
-                in: '$$x.amount',
-              },
-            },
-          },
-          totalDeposits: { $sum: '$deposits.amount' },
-        },
-      },
+  const allData = await Promise.all(
+    allUsers.map(async (user) => {
+      const [payments, batchPayments] = await Promise.all([
+        InternetPayment.find({ user: user._id }).lean(),
+        Balance.find({ user: user._id }).lean(),
+      ]);
 
-      // ===============================
-      // استخراج المصاريف كأرقام فقط
-      // ===============================
-      {
-        $addFields: {
-          expensesPaid: {
-            $ifNull: [
-              {
-                $arrayElemAt: [
-                  {
-                    $map: {
-                      input: {
-                        $filter: {
-                          input: '$expensesByStatus',
-                          as: 'e',
-                          cond: { $eq: ['$$e._id', 'تم التسديد'] },
-                        },
-                      },
-                      as: 'x',
-                      in: '$$x.total',
-                    },
-                  },
-                  0,
-                ],
-              },
-              0,
-            ],
-          },
+      return {
+        userId: user._id,
+        name: user.name,
+        email: user.email,
+        payments,
+        batchPayments,
+        paymentsCount: payments.length,
+        batchPaymentsCount: batchPayments.length,
+      };
+    })
+  );
 
-          expensesUnpaid: {
-            $ifNull: [
-              {
-                $arrayElemAt: [
-                  {
-                    $map: {
-                      input: {
-                        $filter: {
-                          input: '$expensesByStatus',
-                          as: 'e',
-                          cond: { $eq: ['$$e._id', 'غير مسددة'] },
-                        },
-                      },
-                      as: 'x',
-                      in: '$$x.total',
-                    },
-                  },
-                  0,
-                ],
-              },
-              0,
-            ],
-          },
-
-          expensesInProgress: {
-            $ifNull: [
-              {
-                $arrayElemAt: [
-                  {
-                    $map: {
-                      input: {
-                        $filter: {
-                          input: '$expensesByStatus',
-                          as: 'e',
-                          cond: {
-                            $in: ['$$e._id', ['بدء التسديد', 'جاري التسديد']],
-                          },
-                        },
-                      },
-                      as: 'x',
-                      in: '$$x.total',
-                    },
-                  },
-                  0,
-                ],
-              },
-              0,
-            ],
-          },
-        },
-      },
-
-      // ===============================
-      // مجموع المصاريف
-      // ===============================
-      {
-        $addFields: {
-          totalExpenses: {
-            $add: ['$expensesPaid', '$expensesUnpaid', '$expensesInProgress'],
-          },
-        },
-      },
-
-      // ===============================
-      // الحسابات النهائية
-      // ===============================
-      {
-        $addFields: {
-          netBalance: {
-            $subtract: ['$totalDeposits', '$totalExpenses'],
-          },
-          finalBalance: {
-            $add: [
-              { $subtract: ['$totalDeposits', '$totalExpenses'] },
-              '$balance',
-            ],
-          },
-        },
-      },
-
-      // ===============================
-      // الأعمدة النهائية
-      // ===============================
-      {
-        $project: {
-          name: 1,
-          email: 1,
-          balance: 1,
-          totalDeposits: 1,
-          confirmedDeposits: 1,
-          unconfirmedDeposits: 1,
-          expensesPaid: 1,
-          expensesUnpaid: 1,
-          expensesInProgress: 1,
-          totalExpenses: 1,
-          netBalance: 1,
-          finalBalance: 1,
-        },
-      },
-    ]);
-
-    res.status(200).json(report);
-  } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'حدث خطأ أثناء جلب التقرير' });
-  }
+  console.log(allData);
+  res.status(200).json(allData);
+} catch (error) {
+  console.error('خطأ أثناء جلب تقرير الأرصدة:', error);
+  res.status(500).json({
+    message: 'حدث خطأ أثناء جلب تقرير الأرصدة',
+    error: error.message,
+  });
+}
 });
 
 router.get('/newPosBalanceReport', async (req, res) => {

@@ -1,0 +1,45 @@
+{
+  "createdAt": "2026-05-10T08:28:51.623Z",
+  "collections": [
+    {
+      "name": "users",
+      "count": 133,
+      "file": "users.json"
+    },
+    {
+      "name": "invoices",
+      "count": 66,
+      "file": "invoices.json"
+    },
+    {
+      "name": "payments",
+      "count": 55338,
+      "file": "payments.json"
+    },
+    {
+      "name": "points",
+      "count": 50,
+      "file": "points.json"
+    },
+    {
+      "name": "products",
+      "count": 102,
+      "file": "products.json"
+    },
+    {
+      "name": "productsOnline",
+      "count": 25,
+      "file": "productsOnline.json"
+    },
+    {
+      "name": "balances",
+      "count": 2994,
+      "file": "balances.json"
+    },
+    {
+      "name": "saveNumbers",
+      "count": 50,
+      "file": "saveNumbers.json"
+    }
+  ]
+}
