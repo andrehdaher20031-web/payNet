@@ -23,4 +23,10 @@ const balanceSchema = new mongoose.Schema({
   }
 });
 
+balanceSchema.index({ user: 1, date: -1 });
+balanceSchema.index({ destination: 1, date: -1 });
+balanceSchema.index({ name: 1, date: -1 });
+balanceSchema.index({ status: 1, date: -1 });
+balanceSchema.index({ noticeNumber: 1 }, { sparse: true });
+
 module.exports = mongoose.model("Haram", balanceSchema);

@@ -35,6 +35,9 @@ const pointSchema = new mongoose.Schema(
   }
 );
 
+pointSchema.index({ email: 1 });
+pointSchema.index({ username: 1 });
+
 const Point = mongoose.model("Point", pointSchema);
 
 module.exports = Point; // هذا السطر مهم جداً

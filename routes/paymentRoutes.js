@@ -5,10 +5,46 @@ const User = require('../models/User');
 const Payment = require('../models/Payment'); // تأكد أنك استوردت Payment
 const saveNumber = require('../models/saveNumber'); // تأكد أنك استوردت Payment
 const authMiddleware = require('../middleware/authMiddleware');
+const { cache } = require('../services/cache.service');
+const { recordPaymentStats } = require('../services/dailyStats.service');
+
+const PAYMENT_FIELDS =
+  'landline company speed email amount calculatedAmount paymentType status note createdAt updatedAt user';
+const PENDING_STATUSES = ['جاري التسديد', 'بدء التسديد'];
+
+const invalidatePaymentCache = async () => {
+  await cache.delByPrefix('payments:');
+  await cache.delByPrefix('report:');
+  await cache.delByPrefix('balance:');
+};
+
+const emitPendingPayments = async (req) => {
+  const io = req.app.get('io');
+  console.log(io);
+  if (!io) return;
+
+  const pendingPayments = await Payment.find({
+    status: { $in: PENDING_STATUSES },
+  })
+    .select(PAYMENT_FIELDS)
+    .sort({ createdAt: -1 })
+    .limit(500)
+    .lean();
+  io.emit('pendingPaymentsUpdate', pendingPayments);
+};
 
 router.post('/internet-full', authMiddleware, async (req, res) => {
   try {
-    const { landline, company, speed, amount, email, paymentType, calculatedAmount, ...extra } = req.body;
+    const {
+      landline,
+      company,
+      speed,
+      amount,
+      email,
+      paymentType,
+      calculatedAmount,
+      ...extra
+    } = req.body;
 
     const userId = req.user.id;
     if (!landline || !company || !speed || !amount) {
@@ -36,7 +72,6 @@ router.post('/internet-full', authMiddleware, async (req, res) => {
       amount,
       email,
       createdAt: { $gt: new Date(Date.now() - 60 * 1000) },
-
     });
 
     // خصم الرصيد
@@ -53,21 +88,15 @@ router.post('/internet-full', authMiddleware, async (req, res) => {
       email,
       calculatedAmount,
       status: 'جاري التسديد',
-      extra
-
-
+      extra,
     });
     await payment.save();
+    await recordPaymentStats(payment, 1);
+    await invalidatePaymentCache();
 
-    console.log(payment)
+    console.log(payment);
 
-    const io = req.app.get('io');
-    if (io) {
-      const pendingPayments = await Payment.find({
-        status: { $in: ['جاري التسديد', 'بدء التسديد'] },
-      });
-      io.emit('pendingPaymentsUpdate', pendingPayments);
-    }
+    await emitPendingPayments(req);
 
     res.status(200).json({
       message: 'تمت العملية بنجاح',
@@ -106,14 +135,10 @@ router.post('/adminPayInternet', async (req, res) => {
     });
 
     await payment.save();
+    await recordPaymentStats(payment, 1);
+    await invalidatePaymentCache();
 
-    const io = req.app.get('io');
-    if (io) {
-      const pendingPayments = await Payment.find({
-        status: { $in: ['جاري التسديد', 'بدء التسديد'] },
-      });
-      io.emit('pendingPaymentsUpdate', pendingPayments);
-    }
+    await emitPendingPayments(req);
 
     res.status(200).json({
       message: 'تمت العملية بنجاح',
@@ -130,8 +155,8 @@ router.post('/adminPayInternet', async (req, res) => {
 router.post('/save-number', authMiddleware, async (req, res) => {
   try {
     const formData = req.body;
-    const num = Number(formData.amount)
-    calculatedAmount = num + (num * 0.05)
+    const num = Number(formData.amount);
+    calculatedAmount = num + num * 0.05;
     console.log(calculatedAmount);
     const userId = req.user.id;
     const newNumber = new saveNumber({
@@ -142,8 +167,7 @@ router.post('/save-number', authMiddleware, async (req, res) => {
       amount: formData.amount,
       email: formData.email,
       date: formData.date,
-      calculatedAmount
-
+      calculatedAmount,
     });
     await newNumber.save();
     res.status(201).json({ message: 'تم حفظ الرقم بنجاح' });
@@ -156,7 +180,13 @@ router.post('/save-number', authMiddleware, async (req, res) => {
 router.get('/save-number', async (req, res) => {
   const email = req.query;
   try {
-    const payment = await saveNumber.find(email);
+    const payment = await saveNumber
+      .find(email)
+      .select(
+        'landline company speed email amount paymentType status note createdAt date user'
+      )
+      .sort({ date: -1 })
+      .lean();
     res.status(201).json(payment);
   } catch {
     res.status(401).json('error');
@@ -215,15 +245,11 @@ router.post('/pay-selected', authMiddleware, async (req, res) => {
     await user.save();
 
     const created = await Payment.insertMany(docsToCreate, { ordered: false });
+    await Promise.all(created.map((payment) => recordPaymentStats(payment, 1)));
+    await invalidatePaymentCache();
 
     // تحديث قائمة العمليات المعلقة عبر Socket.IO إن وجدت
-    const io = req.app.get('io');
-    if (io) {
-      const pendingPayments = await Payment.find({
-        status: { $in: ['جاري التسديد', 'بدء التسديد'] },
-      });
-      io.emit('pendingPaymentsUpdate', pendingPayments);
-    }
+    await emitPendingPayments(req);
 
     return res.status(201).json({
       message: 'تم إنشاء المدفوعات',

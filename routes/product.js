@@ -2,6 +2,13 @@ const express = require('express');
 const router = express.Router();
 const Product = require('../models/Product');
 const authMiddleware = require('../middleware/authMiddleware');
+const { cache, cacheKey, getOrSet } = require('../services/cache.service');
+
+const PRODUCT_FIELDS = 'name price priceCost priceWolesale description category imageUrl stock';
+
+const invalidateProductCache = async () => {
+  await cache.delByPrefix('product:');
+};
 
 const MAX_PRODUCTS_PER_PAGE = 60;
 
@@ -49,13 +56,23 @@ function buildProductSearchFilter(searchTerm) {
 
 async function sendProducts(req, res, filter = {}) {
   if (!hasPaginationQuery(req.query)) {
-    const products = await Product.find(filter).sort({ _id: -1 }).lean();
+    const loadProducts = () =>
+      Product.find(filter).select(PRODUCT_FIELDS).sort({ _id: -1 }).lean();
+    const products = Object.keys(filter).length
+      ? await loadProducts()
+      : await getOrSet(cacheKey('product:all', req.query), 300, loadProducts);
+
     return res.status(200).json(products);
   }
 
   const { page, limit, skip } = getPagination(req.query);
   const [products, total] = await Promise.all([
-    Product.find(filter).sort({ _id: -1 }).skip(skip).limit(limit).lean(),
+    Product.find(filter)
+      .select(PRODUCT_FIELDS)
+      .sort({ _id: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
     Product.countDocuments(filter),
   ]);
   const totalPages = Math.max(Math.ceil(total / limit), 1);
@@ -116,6 +133,7 @@ router.post('/add', async (req, res) => {
       }
     );
 
+    await invalidateProductCache();
     res.status(200).json({
       message: 'تمت إضافة المنتج أو تحديث الكمية بنجاح',
       product,
@@ -146,6 +164,7 @@ router.delete('/delete-product/:id', async (req, res) => {
       });
     }
 
+    await invalidateProductCache();
     return res.status(200).json({
       message: 'تم حذف المنتج بنجاح',
     });
@@ -189,6 +208,7 @@ router.put('/update-product/:id', async (req, res) => {
     product.imageUrl = imageUrl ?? product.imageUrl;
 
     const updatedProduct = await product.save();
+    await invalidateProductCache();
 
     res.status(200).json(updatedProduct);
   } catch (error) {

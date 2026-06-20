@@ -8,7 +8,7 @@ const authMiddleware = require("../middleware/authMiddleware");
 // GET /api/user/balance
 router.get("/balance", authMiddleware, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id).select("balance");
+    const user = await User.findById(req.user.id).select("balance").lean();
     if (!user) return res.status(404).json({ message: "المستخدم غير موجود" });
 
     res.json({ balance: user.balance });
@@ -19,11 +19,11 @@ router.get("/balance", authMiddleware, async (req, res) => {
 
 router.get('/daen', authMiddleware, async (req, res) => {
   try {
-    const user = await User.findById(req.user.id)
+    const user = await User.findById(req.user.id).select('email').lean()
     const balance = await Balance.find({
       status: false,
       name: user.email
-    })
+    }).select('amount').lean()
     const totalAmount = balance.reduce((sum, item) => sum + item.amount, 0)
 
     if (!user) return res.status(404).json({ message: "المستخدم غير موجود" });
@@ -39,7 +39,7 @@ router.post("/", async (req, res) => {
     const { name, email, number, password, balance, role, card } = req.body;
 
     // تحقق إذا كان المستخدم موجود
-    const existingUser = await User.findOne({ email });
+    const existingUser = await User.findOne({ email }).select('_id').lean();
     if (existingUser) {
       return res.status(400).json({ message: "المستخدم موجود مسبقاً" });
     }
@@ -67,7 +67,7 @@ router.get("/get-user-by-email", authMiddleware, async (req, res) => {
   try {
     console.log(req.query);
     const email = req.query.email;
-    const user = await User.findOne({ email });
+    const user = await User.findOne({ email }).select('card').lean();
     if (!user) {
       return res.status(404).json({ message: "المستخدم غير موجود" });
     }

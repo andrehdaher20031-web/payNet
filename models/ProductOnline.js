@@ -26,4 +26,6 @@ const ProductSchema = new mongoose.Schema({
   cards: [CardSchema]
 });
 
+ProductSchema.index({ name: 1 });
+
 module.exports = mongoose.model('ProductOnline', ProductSchema);
