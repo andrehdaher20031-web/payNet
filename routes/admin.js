@@ -765,23 +765,16 @@ router.get('/payments/bydate', authMiddleware, async (req, res) => {
     // ضبط نهاية اليوم الأخير لتشمل كامل اليوم
     end.setHours(23, 59, 59, 999);
 
-    // البحث في قاعدة البيانات
-    const { page, limit, skip } = getPagination(req.query);
     const filter = {
       status: { $in: FINAL_STATUSES },
       createdAt: { $gte: start, $lte: end },
     };
-    const [payments, total] = await Promise.all([
-      InternetPayment.find(filter)
-        .select(PAYMENT_FIELDS)
-        .sort({ createdAt: -1 })
-        .skip(skip)
-        .limit(limit)
-        .lean(),
-      InternetPayment.countDocuments(filter),
-    ]);
+    const payments = await InternetPayment.find(filter)
+      .select(PAYMENT_FIELDS)
+      .sort({ createdAt: -1 })
+      .lean();
 
-    res.json(paginatedResponse({ data: payments, page, limit, total }));
+    res.json(payments);
   } catch (error) {
     console.error('فشل في جلب عمليات المستخدم حسب التاريخ:', error);
     res.status(500).json({ message: 'حدث خطأ في الخادم' });
