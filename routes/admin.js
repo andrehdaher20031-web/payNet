@@ -21,7 +21,7 @@ const {
 } = require('../utils/pagination');
 
 const PAYMENT_FIELDS =
-  'landline company speed email amount calculatedAmount paymentType status note createdAt updatedAt user';
+  'landline company speed email amount calculatedAmount paymentType status note extra createdAt updatedAt user';
 const BALANCE_FIELDS =
   'destination name number operator amount noticeNumber amountDaen date isConfirmed status createdAt user';
 const USER_FIELDS = 'name email number role balance card';
@@ -314,216 +314,166 @@ router.get('/all-user', authMiddleware, async (req, res) => {
 
 router.get('/getPOSBalanceReport', authMiddleware, async (req, res) => {
   try {
-    const report = await getOrSet(cacheKey('report:pos-balance', req.query), 300, () => User.aggregate([
-      // ===============================
-      // الإيداعات
-      // ===============================
-      {
-        $lookup: {
-          from: 'harams',
-          localField: '_id',
-          foreignField: 'user',
-          as: 'deposits',
+    const report = await getOrSet(cacheKey('report:pos-balance', req.query), 300, () =>
+      User.aggregate([
+        {
+          $lookup: {
+            from: 'harams',
+            localField: '_id',
+            foreignField: 'user',
+            as: 'deposits',
+          },
         },
-      },
-
-      // ===============================
-      // المصاريف حسب الحالة
-      // ===============================
-      {
-        $lookup: {
-          from: 'payments',
-          let: { userId: '$_id' },
-          pipeline: [
-            {
-              $match: {
-                $expr: { $eq: ['$user', '$$userId'] },
-              },
-            },
-            {
-              $group: {
-                _id: '$status',
-                total: { $sum: '$amount' },
-              },
-            },
-          ],
-          as: 'expensesByStatus',
-        },
-      },
-
-      // ===============================
-      // حساب الإيداعات المؤكدة وغير المؤكدة
-      // ===============================
-      {
-        $addFields: {
-          confirmedDeposits: {
-            $sum: {
-              $map: {
-                input: {
-                  $filter: {
-                    input: '$deposits',
-                    as: 'd',
-                    cond: { $eq: ['$$d.isConfirmed', true] },
-                  },
+        {
+          $lookup: {
+            from: 'payments',
+            let: { userId: '$_id' },
+            pipeline: [
+              {
+                $match: {
+                  $expr: { $eq: ['$user', '$$userId'] },
                 },
-                as: 'x',
-                in: '$$x.amount',
               },
-            },
-          },
-          unconfirmedDeposits: {
-            $sum: {
-              $map: {
-                input: {
-                  $filter: {
-                    input: '$deposits',
-                    as: 'd',
-                    cond: { $eq: ['$$d.isConfirmed', false] },
-                  },
+              {
+                $group: {
+                  _id: '$status',
+                  total: { $sum: '$amount' },
                 },
-                as: 'x',
-                in: '$$x.amount',
+              },
+            ],
+            as: 'expensesByStatus',
+          },
+        },
+        {
+          $addFields: {
+            confirmedDeposits: {
+              $sum: {
+                $map: {
+                  input: {
+                    $filter: {
+                      input: '$deposits',
+                      as: 'deposit',
+                      cond: { $eq: ['$$deposit.isConfirmed', true] },
+                    },
+                  },
+                  as: 'deposit',
+                  in: '$$deposit.amount',
+                },
+              },
+            },
+            unconfirmedDeposits: {
+              $sum: {
+                $map: {
+                  input: {
+                    $filter: {
+                      input: '$deposits',
+                      as: 'deposit',
+                      cond: { $eq: ['$$deposit.isConfirmed', false] },
+                    },
+                  },
+                  as: 'deposit',
+                  in: '$$deposit.amount',
+                },
+              },
+            },
+            totalDeposits: { $sum: '$deposits.amount' },
+          },
+        },
+        {
+          $addFields: {
+            expensesPaid: {
+              $sum: {
+                $map: {
+                  input: {
+                    $filter: {
+                      input: '$expensesByStatus',
+                      as: 'expense',
+                      cond: { $eq: ['$$expense._id', 'تم التسديد'] },
+                    },
+                  },
+                  as: 'expense',
+                  in: '$$expense.total',
+                },
+              },
+            },
+            expensesUnpaid: {
+              $sum: {
+                $map: {
+                  input: {
+                    $filter: {
+                      input: '$expensesByStatus',
+                      as: 'expense',
+                      cond: { $eq: ['$$expense._id', 'غير مسددة'] },
+                    },
+                  },
+                  as: 'expense',
+                  in: '$$expense.total',
+                },
+              },
+            },
+            expensesInProgress: {
+              $sum: {
+                $map: {
+                  input: {
+                    $filter: {
+                      input: '$expensesByStatus',
+                      as: 'expense',
+                      cond: { $in: ['$$expense._id', PENDING_STATUSES] },
+                    },
+                  },
+                  as: 'expense',
+                  in: '$$expense.total',
+                },
               },
             },
           },
-          totalDeposits: { $sum: '$deposits.amount' },
         },
-      },
-
-      // ===============================
-      // استخراج المصاريف كأرقام فقط
-      // ===============================
-      {
-        $addFields: {
-          expensesPaid: {
-            $ifNull: [
-              {
-                $arrayElemAt: [
-                  {
-                    $map: {
-                      input: {
-                        $filter: {
-                          input: '$expensesByStatus',
-                          as: 'e',
-                          cond: { $eq: ['$$e._id', 'تم التسديد'] },
-                        },
-                      },
-                      as: 'x',
-                      in: '$$x.total',
-                    },
-                  },
-                  0,
-                ],
-              },
-              0,
-            ],
-          },
-
-          expensesUnpaid: {
-            $ifNull: [
-              {
-                $arrayElemAt: [
-                  {
-                    $map: {
-                      input: {
-                        $filter: {
-                          input: '$expensesByStatus',
-                          as: 'e',
-                          cond: { $eq: ['$$e._id', 'غير مسددة'] },
-                        },
-                      },
-                      as: 'x',
-                      in: '$$x.total',
-                    },
-                  },
-                  0,
-                ],
-              },
-              0,
-            ],
-          },
-
-          expensesInProgress: {
-            $ifNull: [
-              {
-                $arrayElemAt: [
-                  {
-                    $map: {
-                      input: {
-                        $filter: {
-                          input: '$expensesByStatus',
-                          as: 'e',
-                          cond: {
-                            $in: ['$$e._id', ['بدء التسديد', 'جاري التسديد']],
-                          },
-                        },
-                      },
-                      as: 'x',
-                      in: '$$x.total',
-                    },
-                  },
-                  0,
-                ],
-              },
-              0,
-            ],
+        {
+          $addFields: {
+            totalExpenses: {
+              $add: ['$expensesPaid', '$expensesUnpaid', '$expensesInProgress'],
+            },
           },
         },
-      },
-
-      // ===============================
-      // مجموع المصاريف
-      // ===============================
-      {
-        $addFields: {
-          totalExpenses: {
-            $add: ['$expensesPaid', '$expensesUnpaid', '$expensesInProgress'],
+        {
+          $addFields: {
+            netBalance: {
+              $subtract: ['$totalDeposits', '$totalExpenses'],
+            },
+            finalBalance: {
+              $add: [
+                { $subtract: ['$totalDeposits', '$totalExpenses'] },
+                { $ifNull: ['$balance', 0] },
+              ],
+            },
           },
         },
-      },
-
-      // ===============================
-      // الحسابات النهائية
-      // ===============================
-      {
-        $addFields: {
-          netBalance: {
-            $subtract: ['$totalDeposits', '$totalExpenses'],
-          },
-          finalBalance: {
-            $add: [
-              { $subtract: ['$totalDeposits', '$totalExpenses'] },
-              '$balance',
-            ],
+        {
+          $project: {
+            name: 1,
+            email: 1,
+            balance: 1,
+            totalDeposits: 1,
+            confirmedDeposits: 1,
+            unconfirmedDeposits: 1,
+            expensesPaid: 1,
+            expensesUnpaid: 1,
+            expensesInProgress: 1,
+            totalExpenses: 1,
+            netBalance: 1,
+            finalBalance: 1,
           },
         },
-      },
-
-      // ===============================
-      // الأعمدة النهائية
-      // ===============================
-      {
-        $project: {
-          name: 1,
-          email: 1,
-          balance: 1,
-          totalDeposits: 1,
-          confirmedDeposits: 1,
-          unconfirmedDeposits: 1,
-          expensesPaid: 1,
-          expensesUnpaid: 1,
-          expensesInProgress: 1,
-          totalExpenses: 1,
-          netBalance: 1,
-          finalBalance: 1,
-        },
-      },
-    ]));
+      ])
+    );
 
     res.status(200).json(report);
   } catch (error) {
-    console.error(error);
-    res.status(500).json({ message: 'حدث خطأ أثناء جلب التقرير' });
+    console.error('خطأ أثناء جلب تقرير الأرصدة:', error);
+    res.status(500).json({
+      message: 'حدث خطأ أثناء جلب تقرير الأرصدة',
+      error: error.message,
+    });
   }
 });
 

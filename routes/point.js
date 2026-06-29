@@ -9,7 +9,7 @@ const { cache } = require("../services/cache.service");
 const { getPagination, paginatedResponse } = require("../utils/pagination");
 
 const BALANCE_FIELDS = 'destination name number operator amount noticeNumber amountDaen date isConfirmed status createdAt user';
-const PAYMENT_FIELDS = 'landline company speed email amount calculatedAmount paymentType status note createdAt updatedAt user';
+const PAYMENT_FIELDS = 'landline company speed email amount calculatedAmount paymentType status note extra createdAt updatedAt user';
 
 const invalidatePointCache = async () => {
   await cache.delByPrefix('point:');

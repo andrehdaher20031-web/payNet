@@ -10,6 +10,84 @@ const invalidateProductCache = async () => {
   await cache.delByPrefix('product:');
 };
 
+const MAX_PRODUCTS_PER_PAGE = 60;
+
+function toPositiveInteger(value, fallback) {
+  const numberValue = Number.parseInt(value, 10);
+
+  if (!Number.isFinite(numberValue) || numberValue < 1) {
+    return fallback;
+  }
+
+  return numberValue;
+}
+
+function hasPaginationQuery(query) {
+  return query.page !== undefined || query.limit !== undefined;
+}
+
+function getPagination(query) {
+  const page = toPositiveInteger(query.page, 1);
+  const requestedLimit = toPositiveInteger(query.limit, 20);
+  const limit = Math.min(requestedLimit, MAX_PRODUCTS_PER_PAGE);
+
+  return {
+    page,
+    limit,
+    skip: (page - 1) * limit,
+  };
+}
+
+function escapeRegex(value = '') {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildProductSearchFilter(searchTerm) {
+  const safeSearchTerm = escapeRegex(searchTerm);
+
+  return {
+    $or: [
+      { name: { $regex: safeSearchTerm, $options: 'i' } },
+      { description: { $regex: safeSearchTerm, $options: 'i' } },
+      { category: { $regex: safeSearchTerm, $options: 'i' } },
+    ],
+  };
+}
+
+async function sendProducts(req, res, filter = {}) {
+  if (!hasPaginationQuery(req.query)) {
+    const loadProducts = () =>
+      Product.find(filter).select(PRODUCT_FIELDS).sort({ _id: -1 }).lean();
+    const products = Object.keys(filter).length
+      ? await loadProducts()
+      : await getOrSet(cacheKey('product:all', req.query), 300, loadProducts);
+
+    return res.status(200).json(products);
+  }
+
+  const { page, limit, skip } = getPagination(req.query);
+  const [products, total] = await Promise.all([
+    Product.find(filter)
+      .select(PRODUCT_FIELDS)
+      .sort({ _id: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean(),
+    Product.countDocuments(filter),
+  ]);
+  const totalPages = Math.max(Math.ceil(total / limit), 1);
+
+  return res.status(200).json({
+    data: products,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages,
+    },
+  });
+}
+
 // إضافة منتج جديد
 router.post('/add', async (req, res) => {
   try {
@@ -68,10 +146,7 @@ router.post('/add', async (req, res) => {
 
 router.get('/get-product', async (req, res) => {
   try {
-    const products = await getOrSet(cacheKey('product:all', req.query), 300, () =>
-      Product.find({}).select(PRODUCT_FIELDS).sort({ name: 1 }).lean()
-    );
-    res.status(201).json(products);
+    await sendProducts(req, res);
   } catch (err) {
     res.status(500).json({ message: 'حدث خطأ أثناء جلب المنتجات' });
   }
@@ -146,14 +221,10 @@ router.put('/update-product/:id', async (req, res) => {
 
 router.get('/search-product', async (req, res) => {
   try {
-    const { name } = req.query;
+    const name = String(req.query.name || '').trim();
+    const filter = name ? buildProductSearchFilter(name) : {};
 
-    const products = await Product.find(
-      name
-        ? { $text: { $search: name } }
-        : {}
-    ).select(PRODUCT_FIELDS).limit(50).lean();
-    res.status(200).json(products);
+    await sendProducts(req, res, filter);
   } catch (error) {
     console.error(error);
     res.status(500).json({
