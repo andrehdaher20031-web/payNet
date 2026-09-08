@@ -1,12 +1,8 @@
 const User = require("../models/User");
 const jwt = require("jsonwebtoken");
-const Balance = require("../models/Balance");
 
 exports.login = async (req, res) => {
   const { email, password } = req.body;
-  const balanceDaen = await Balance.findOne({}).sort({ _id: -1 });
-  console.log(balanceDaen.amountDaen)
-
 
   try {
     // تحقق من وجود المستخدم

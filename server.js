@@ -8,6 +8,13 @@ const adminRoutes = require('./routes/admin');
 const point = require('./routes/point');
 const http = require('http'); // جديد
 const productOnline = require('./routes/productOnline')
+const proWaveRoutes = require('./routes/proWave');
+const alesoRoutes = require('./routes/aleso');
+const {
+  startDirectTopUpStatusScheduler,
+  startReconciliationScheduler,
+} = require('./controllers/proWave');
+const { startAlesoOrderStatusScheduler } = require('./controllers/aleso');
 //const Product = require("./models/Product");
 const { Server } = require('socket.io'); // جديد
 
@@ -66,6 +73,8 @@ app.use('/api/user', require('./routes/userRoutes'));
 app.use('/api/payment', require('./routes/paymentRoutes'));
 app.use('/api/invoice', invoiceRoutes);
 app.use('/api/productonline', productOnline)
+app.use('/api/prowave', proWaveRoutes);
+app.use('/api/aleso', alesoRoutes);
 
 // حفظ عملية التسديد في قاعدة البيانات
 
@@ -114,6 +123,9 @@ const startServer = async () => {
 
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`Server running on port ${PORT}`);
+      startReconciliationScheduler();
+      startDirectTopUpStatusScheduler();
+      startAlesoOrderStatusScheduler();
     });
   } catch (err) {
     console.error('Failed to start server');

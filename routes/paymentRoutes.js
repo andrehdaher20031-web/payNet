@@ -11,6 +11,15 @@ const { recordPaymentStats } = require('../services/dailyStats.service');
 const PAYMENT_FIELDS =
   'landline company speed email amount calculatedAmount paymentType status note extra createdAt updatedAt user';
 const PENDING_STATUSES = ['جاري التسديد', 'بدء التسديد'];
+const ADMIN_PENDING_PAYMENT_FILTER = {
+  status: { $in: PENDING_STATUSES },
+  $nor: [
+    { 'extra.provider': 'prowave', 'extra.operation_type': 'direct_topup' },
+    { 'extra.provider': 'prowave', 'extra.prowave_operation_type': 'direct_topup' },
+  ],
+};
+const PROWAVE_DIRECT_TOPUP_ONLY_MESSAGE =
+  'طلبات PUBG و Free Fire يجب أن ترسل عبر مسار الشحن المباشر فقط';
 
 const normalizeExtra = (bodyExtra, extraFields = {}) => {
   if (bodyExtra && typeof bodyExtra === 'object' && !Array.isArray(bodyExtra)) {
@@ -18,6 +27,45 @@ const normalizeExtra = (bodyExtra, extraFields = {}) => {
   }
 
   return bodyExtra !== undefined ? bodyExtra : extraFields;
+};
+
+const normalizeServiceText = (value) =>
+  String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, ' ')
+    .replace(/\s+/g, ' ');
+
+const getExtraSearchText = (extra) => {
+  if (!extra || typeof extra !== 'object' || Array.isArray(extra)) return '';
+
+  return [
+    extra.provider,
+    extra.formType,
+    extra.game,
+    extra.service,
+    extra.item_group,
+    extra.itemGroup,
+    extra.product,
+    extra.productName,
+  ].filter(Boolean).join(' ');
+};
+
+const isLegacyProWaveDirectTopUpPayment = ({ landline, company, speed, extra }) => {
+  const normalizedText = normalizeServiceText(
+    [landline, company, speed, getExtraSearchText(extra)].filter(Boolean).join(' ')
+  );
+
+  if (!normalizedText) return false;
+
+  const isFreeFire =
+    /\bfree\s*fire\b/.test(normalizedText) || /\bfreefire\b/.test(normalizedText);
+  const isPubg =
+    /\bpubg\b/.test(normalizedText) &&
+    !/\bpubg\s*(mobile\s*)?tr\b/.test(normalizedText) &&
+    !/\bpubgtr\b/.test(normalizedText);
+
+  return isPubg || isFreeFire;
 };
 
 const invalidatePaymentCache = async () => {
@@ -31,9 +79,7 @@ const emitPendingPayments = async (req) => {
   console.log(io);
   if (!io) return;
 
-  const pendingPayments = await Payment.find({
-    status: { $in: PENDING_STATUSES },
-  })
+  const pendingPayments = await Payment.find(ADMIN_PENDING_PAYMENT_FILTER)
     .select(PAYMENT_FIELDS)
     .sort({ createdAt: -1 })
     .limit(500)
@@ -59,6 +105,12 @@ router.post('/internet-full', authMiddleware, async (req, res) => {
     const userId = req.user.id;
     if (!landline || !company || !speed || !amount) {
       return res.status(400).json({ message: 'البيانات غير مكتملة' });
+    }
+
+    if (isLegacyProWaveDirectTopUpPayment({ landline, company, speed, extra })) {
+      return res.status(400).json({
+        message: PROWAVE_DIRECT_TOPUP_ONLY_MESSAGE,
+      });
     }
 
     const user = await User.findById(userId);
@@ -136,6 +188,12 @@ router.post('/adminPayInternet', async (req, res) => {
 
     if (!landline || !company || !speed || !amount) {
       return res.status(400).json({ message: 'البيانات غير مكتملة' });
+    }
+
+    if (isLegacyProWaveDirectTopUpPayment({ landline, company, speed, extra })) {
+      return res.status(400).json({
+        message: PROWAVE_DIRECT_TOPUP_ONLY_MESSAGE,
+      });
     }
 
     // جلب حساب الأدمن
@@ -250,6 +308,16 @@ router.post('/pay-selected', authMiddleware, async (req, res) => {
         .status(400)
         .json({ message: 'لا توجد عناصر صالحة للإنشاء (landline مفقود)' });
     }
+
+    const blockedDirectTopUpDoc = docsToCreate.find((doc) =>
+      isLegacyProWaveDirectTopUpPayment(doc)
+    );
+    if (blockedDirectTopUpDoc) {
+      return res.status(400).json({
+        message: PROWAVE_DIRECT_TOPUP_ONLY_MESSAGE,
+      });
+    }
+
     let totalAmount = 0;
     docsToCreate.forEach((doc) => {
       totalAmount += parseFloat((doc.amount * 1.05).toFixed(2));

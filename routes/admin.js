@@ -3,9 +3,12 @@ const express = require('express');
 const router = express.Router();
 const InternetPayment = require('../models/Payment');
 const authMiddleware = require('../middleware/authMiddleware');
+const requireAdmin = require('../middleware/requireAdmin');
 const User = require('../models/User');
 const Balance = require('../models/Balance');
 const { confirmPaymentService } = require('../services/payments.services');
+const exchangeRateController = require('../controllers/exchangeRateController');
+const proWaveController = require('../controllers/proWave');
 const { cache, cacheKey, getOrSet } = require('../services/cache.service');
 const {
   cleanMapKey,
@@ -19,6 +22,11 @@ const {
   getPagination,
   paginatedResponse,
 } = require('../utils/pagination');
+const {
+  normalizePaymentStatusLabel,
+  sanitizePaymentStatusForResponse,
+  sanitizePaymentsStatusForResponse,
+} = require('../utils/paymentStatus');
 
 const PAYMENT_FIELDS =
   'landline company speed email amount calculatedAmount paymentType status note extra createdAt updatedAt user';
@@ -27,6 +35,16 @@ const BALANCE_FIELDS =
 const USER_FIELDS = 'name email number role balance card';
 const PENDING_STATUSES = ['جاري التسديد', 'بدء التسديد'];
 const FINAL_STATUSES = ['تم التسديد', 'غير مسددة'];
+const PROVIDER_MANAGED_PENDING_EXCLUSIONS = [
+  { 'extra.provider': 'prowave', 'extra.operation_type': 'direct_topup' },
+  { 'extra.provider': 'prowave', 'extra.prowave_operation_type': 'direct_topup' },
+];
+const ADMIN_PENDING_PAYMENT_FILTER = {
+  status: { $in: PENDING_STATUSES },
+  $nor: PROVIDER_MANAGED_PENDING_EXCLUSIONS,
+};
+const PROVIDER_MANAGED_PAYMENT_MESSAGE =
+  'هذه العملية تدار تلقائياً ولا تعالج من لوحة التسديد اليدوي';
 
 const invalidateReports = async () => {
   await cache.delByPrefix('report:');
@@ -34,6 +52,69 @@ const invalidateReports = async () => {
   await cache.delByPrefix('balance:');
   await cache.delByPrefix('users:');
 };
+
+router.get(
+  '/exchange-rate/prowave',
+  authMiddleware,
+  requireAdmin,
+  exchangeRateController.getProWaveExchangeRate
+);
+
+router.put(
+  '/exchange-rate/prowave',
+  authMiddleware,
+  requireAdmin,
+  exchangeRateController.updateProWaveExchangeRate
+);
+
+router.get(
+  '/exchange-rate/prowave/history',
+  authMiddleware,
+  requireAdmin,
+  exchangeRateController.getProWaveExchangeRateHistory
+);
+
+router.get(
+  '/exchange-rate/aleso',
+  authMiddleware,
+  requireAdmin,
+  exchangeRateController.getAlesoExchangeRate
+);
+
+router.put(
+  '/exchange-rate/aleso',
+  authMiddleware,
+  requireAdmin,
+  exchangeRateController.updateAlesoExchangeRate
+);
+
+router.get(
+  '/exchange-rate/aleso/history',
+  authMiddleware,
+  requireAdmin,
+  exchangeRateController.getAlesoExchangeRateHistory
+);
+
+router.get(
+  '/prowave/prices',
+  authMiddleware,
+  requireAdmin,
+  proWaveController.getAdminPriceReport
+);
+
+router.get(
+  '/prowave/reconciliation',
+  authMiddleware,
+  requireAdmin,
+  proWaveController.getReconciliationReport
+);
+
+router.post(
+  '/prowave/reconciliation/run',
+  authMiddleware,
+  requireAdmin,
+  proWaveController.runReconciliation
+);
 
 const buildPaymentFilters = (query = {}, baseFilter = {}) => {
   const filter = { ...baseFilter };
@@ -50,30 +131,54 @@ const buildPaymentFilters = (query = {}, baseFilter = {}) => {
   return filter;
 };
 
+const getPaymentOperationType = (payment = {}) => {
+  const provider = payment.extra?.provider;
+
+  if (provider === 'aleso') return 'منتج Aleso';
+  if (provider === 'prowave') return 'منتج رقمي';
+
+  return 'تسديد خدمة';
+};
+
+const isProviderManagedDirectTopUpPayment = (payment = {}) =>
+  payment.extra?.provider === 'prowave' &&
+  (
+    payment.extra?.operation_type === 'direct_topup' ||
+    payment.extra?.prowave_operation_type === 'direct_topup'
+  );
+
 const emitPendingPayments = async (req) => {
   const io = req.app.get('io');
   if (!io) return;
 
-  const pendingPayments = await InternetPayment.find({ status: { $in: PENDING_STATUSES } })
+  const pendingPayments = await InternetPayment.find(ADMIN_PENDING_PAYMENT_FILTER)
     .select(PAYMENT_FIELDS)
     .sort({ createdAt: -1 })
     .lean();
-  io.emit('pendingPaymentsUpdate', pendingPayments);
+  io.emit('pendingPaymentsUpdate', sanitizePaymentsStatusForResponse(pendingPayments));
 };
 
 router.get('/pending', authMiddleware, async (req, res) => {
-  const filter = buildPaymentFilters(req.query, { status: { $in: PENDING_STATUSES } });
+  const filter = buildPaymentFilters(req.query, ADMIN_PENDING_PAYMENT_FILTER);
   const payments = await InternetPayment.find(filter)
     .select(PAYMENT_FIELDS)
     .sort({ createdAt: -1 })
     .lean();
 
-  res.json(payments);
+  res.json(sanitizePaymentsStatusForResponse(payments));
 });
 
 router.patch('/confirm/:id', async (req, res) => {
   const { id } = req.params;
   const original = await InternetPayment.findById(id).lean();
+  if (!original) {
+    return res.status(404).json({ message: 'العملية غير موجودة' });
+  }
+
+  if (isProviderManagedDirectTopUpPayment(original)) {
+    return res.status(400).json({ message: PROVIDER_MANAGED_PAYMENT_MESSAGE });
+  }
+
   const updated = await InternetPayment.findByIdAndUpdate(
     id,
     { status: 'تم التسديد' },
@@ -85,12 +190,20 @@ router.patch('/confirm/:id', async (req, res) => {
   }
   await invalidateReports();
   await emitPendingPayments(req);
-  res.json(updated);
+  res.json(sanitizePaymentStatusForResponse(updated));
 });
 
 router.patch('/start/:id', async (req, res) => {
   const { id } = req.params;
   const original = await InternetPayment.findById(id).lean();
+  if (!original) {
+    return res.status(404).json({ message: 'العملية غير موجودة' });
+  }
+
+  if (isProviderManagedDirectTopUpPayment(original)) {
+    return res.status(400).json({ message: PROVIDER_MANAGED_PAYMENT_MESSAGE });
+  }
+
   const updated = await InternetPayment.findByIdAndUpdate(
     id,
     { status: 'بدء التسديد' },
@@ -102,26 +215,35 @@ router.patch('/start/:id', async (req, res) => {
   }
   await invalidateReports();
   await emitPendingPayments(req);
-  res.json(updated);
+  res.json(sanitizePaymentStatusForResponse(updated));
 });
 
 router.get('/user/confirmed', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
+    const userEmail = req.user.email;
     const { page, limit, skip } = getPagination(req.query);
     const paymentFilter = buildPaymentFilters(req.query, { user: userId });
-    const balanceFilter = { user: userId };
     const dateRange = buildDateRange(req.query);
-    if (dateRange) {
-      balanceFilter.$or = [{ date: dateRange }, { createdAt: dateRange }];
-    }
+    const balanceClauses = [{ user: userId }];
+    const pointTransferClauses = [{ destination: userEmail }];
     if (req.query.search) {
       const search = new RegExp(escapeRegex(req.query.search), 'i');
       paymentFilter.$or = [{ landline: search }, { company: search }, { email: search }];
-      balanceFilter.$or = [{ name: search }, { destination: search }, { operator: search }];
+      const balanceSearch = { $or: [{ name: search }, { destination: search }, { operator: search }] };
+      balanceClauses.push(balanceSearch);
+      pointTransferClauses.push(balanceSearch);
     }
+    if (dateRange) {
+      const balanceDate = { $or: [{ date: dateRange }, { createdAt: dateRange }] };
+      balanceClauses.push(balanceDate);
+      pointTransferClauses.push(balanceDate);
+    }
+    const balanceFilter = balanceClauses.length === 1 ? balanceClauses[0] : { $and: balanceClauses };
+    const pointTransferFilter =
+      pointTransferClauses.length === 1 ? pointTransferClauses[0] : { $and: pointTransferClauses };
 
-    const [payments, batchpayments] = await Promise.all([
+    const [payments, batchpayments, pointTransfers] = await Promise.all([
       InternetPayment.find(paymentFilter)
         .select(PAYMENT_FIELDS)
         .sort({ createdAt: -1 })
@@ -130,11 +252,18 @@ router.get('/user/confirmed', authMiddleware, async (req, res) => {
         .select(BALANCE_FIELDS)
         .sort({ date: -1 })
         .lean(),
+      Balance.find(pointTransferFilter)
+        .select(BALANCE_FIELDS)
+        .sort({ date: -1 })
+        .lean(),
     ]);
 
     const paymentWithType = payments.map((p) => ({
       ...p,
       landline: String(p.landline || ''),
+      status: normalizePaymentStatusLabel(p.status),
+      operationType: getPaymentOperationType(p),
+      operationTarget: p.email || '',
       source: 'internet',
     }));
 
@@ -142,16 +271,35 @@ router.get('/user/confirmed', authMiddleware, async (req, res) => {
       ...b,
       landline: String(b.number || ''),
       company: b.operator || '—',
-      speed: 'دفعة',
+      speed: 'تعبئة رصيد',
       note: '—',
       paymentType: b.paymentType || 'cash',
       status: b.status ? 'تم التسديد' : 'غير مسددة',
       createdAt: b.createdAt,
       updatedAt: b.date || b.createdAt,
+      operationType: 'تعبئة رصيد',
+      operationTarget: b.name || '',
       source: 'batch',
     }));
 
-    const allData = [...paymentWithType, ...batchWithType];
+    const pointTransferWithType = pointTransfers.map((b) => ({
+      ...b,
+      landline: b.name || '',
+      company: b.operator || '—',
+      speed: 'تحويل رصيد لنقطة',
+      note: '—',
+      paymentType: b.paymentType || 'cash',
+      status: b.isConfirmed ? 'تم التحويل' : 'غير مؤكد',
+      createdAt: b.createdAt,
+      updatedAt: b.date || b.createdAt,
+      operationType: 'تحويل لنقطة فرعية',
+      operationTarget: [b.name, b.operator].filter(Boolean).join(' - '),
+      pointUsername: b.name || '',
+      pointOwner: b.operator || '',
+      source: 'point-transfer',
+    }));
+
+    const allData = [...paymentWithType, ...batchWithType, ...pointTransferWithType];
 
     allData.sort((a, b) => {
       const da = new Date(a.updatedAt || a.createdAt || 0).getTime();
@@ -199,7 +347,7 @@ router.put('/payment/:id', async (req, res) => {
     }
     await invalidateReports();
 
-    res.json({ message: 'تم تحديث نوع الدفع بنجاح', payment: updatedPayment });
+    res.json({ message: 'تم تحديث نوع الدفع بنجاح', payment: sanitizePaymentStatusForResponse(updatedPayment) });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'حدث خطأ في السيرفر' });
@@ -220,7 +368,7 @@ router.get('/user/allconfirmed', authMiddleware, async (req, res) => {
       InternetPayment.countDocuments(filter),
     ]);
 
-    res.json(paginatedResponse({ data: payments, page, limit, total }));
+    res.json(paginatedResponse({ data: sanitizePaymentsStatusForResponse(payments), page, limit, total }));
   } catch (error) {
     console.error('فشل في جلب عمليات المستخدم:', error);
     res.status(500).json({ message: 'حدث خطأ في الخادم' });
@@ -254,7 +402,7 @@ router.get('/user/pending', authMiddleware, async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    res.json(payments);
+    res.json(sanitizePaymentsStatusForResponse(payments));
   } catch (error) {
     console.error('فشل في جلب عمليات المستخدم:', error);
     res.status(500).json({ message: 'حدث خطأ في الخادم' });
@@ -267,6 +415,13 @@ router.post('/reject/:id', async (req, res) => {
     const { reason, email } = req.body;
     const paymentId = req.params.id;
     const payment = await InternetPayment.findById(paymentId).lean();
+    if (!payment) {
+      return res.status(404).json({ message: 'العملية غير موجودة' });
+    }
+
+    if (isProviderManagedDirectTopUpPayment(payment)) {
+      return res.status(400).json({ message: PROVIDER_MANAGED_PAYMENT_MESSAGE });
+    }
 
     // 1. تحديث العملية إلى "غير مسددة" مع سبب
     const updatedPayment = await InternetPayment.findByIdAndUpdate(
@@ -731,7 +886,7 @@ router.get('/payments/bydate', authMiddleware, async (req, res) => {
       InternetPayment.countDocuments(filter),
     ]);
 
-    res.json(paginatedResponse({ data: payments, page, limit, total }));
+    res.json(paginatedResponse({ data: sanitizePaymentsStatusForResponse(payments), page, limit, total }));
   } catch (error) {
     console.error('فشل في جلب عمليات المستخدم حسب التاريخ:', error);
     res.status(500).json({ message: 'حدث خطأ في الخادم' });

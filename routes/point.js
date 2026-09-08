@@ -6,7 +6,13 @@ const authMiddleware = require("../middleware/authMiddleware");
 const Payment = require("../models/Payment"); // تأكد أنك استوردت Payment
 const Balance = require("../models/Balance");
 const { cache } = require("../services/cache.service");
-const { getPagination, paginatedResponse } = require("../utils/pagination");
+const {
+  buildDateRange,
+  escapeRegex,
+  getPagination,
+  paginatedResponse,
+} = require("../utils/pagination");
+const { normalizePaymentStatusLabel } = require("../utils/paymentStatus");
 
 const BALANCE_FIELDS = 'destination name number operator amount noticeNumber amountDaen date isConfirmed status createdAt user';
 const PAYMENT_FIELDS = 'landline company speed email amount calculatedAmount paymentType status note extra createdAt updatedAt user';
@@ -148,16 +154,37 @@ router.put('/add-balance/:id', async (req, res) => {
 });
 
 
-router.get("/all", async (req, res) => {
+router.get("/all", authMiddleware, async (req, res) => {
   try {
-    const {email} = req.query
+    const ownerEmail = req.user.email;
+    const { pointUsername, search } = req.query;
     const { page, limit, skip } = getPagination(req.query);
-    const filter = { destination: email };
+    const filter = { destination: ownerEmail };
+    const dateRange = buildDateRange(req.query);
+
+    if (pointUsername) filter.name = pointUsername;
+    if (dateRange) filter.date = dateRange;
+    if (search) {
+      const searchRegex = new RegExp(escapeRegex(search), 'i');
+      filter.$or = [
+        { name: searchRegex },
+        { operator: searchRegex },
+      ];
+    }
+
     const [payments, total] = await Promise.all([
       Balance.find(filter).select(BALANCE_FIELDS).sort({ date: -1 }).skip(skip).limit(limit).lean(),
       Balance.countDocuments(filter),
     ]);
-    res.json(paginatedResponse({ data: payments, page, limit, total }));
+
+    const transfers = payments.map((payment) => ({
+      ...payment,
+      fromAccount: payment.destination,
+      pointUsername: payment.name,
+      pointOwner: payment.operator,
+    }));
+
+    res.json(paginatedResponse({ data: transfers, page, limit, total }));
   } catch (error) {
     console.error("خطأ في جلب الدفعات:", error);
     res.status(500).json({ message: "حدث خطأ في الخادم" });
@@ -187,23 +214,65 @@ router.get("/all-point", async (req, res) => {
 
 
 // ✅ فلترة العمليات حسب المستخدم
-router.get("/user/confirmed/point", async (req, res) => {
+router.get("/user/confirmed/point", authMiddleware, async (req, res) => {
   try {
-    const {emailPoint} = req.query
+    const ownerEmail = req.user.email;
+    const { pointUsername, search, status, paymentType } = req.query;
+    const { page, limit, skip } = getPagination(req.query);
 
-    const payments = await Point.find({
-      email: emailPoint,
-    }).select('username').lean();
-    const paymentsPoint = payments.map(p => p.username);
+    const pointFilter = { email: ownerEmail };
+    if (pointUsername) pointFilter.username = pointUsername;
 
-const { page, limit, skip } = getPagination(req.query);
-const filter = { email: { $in: paymentsPoint } };
-const [finical, total] = await Promise.all([
-  Payment.find(filter).select(PAYMENT_FIELDS).sort({ createdAt: -1 }).skip(skip).limit(limit).lean(),
-  Payment.countDocuments(filter),
-]);
+    const points = await Point.find(pointFilter)
+      .select('username owner')
+      .lean();
+    const pointUsernames = points.map((point) => point.username);
 
-    res.status(201).json(paginatedResponse({ data: finical, page, limit, total }))
+    if (pointUsernames.length === 0) {
+      return res.json(paginatedResponse({ data: [], page, limit, total: 0 }));
+    }
+
+    const pointByUsername = new Map(
+      points.map((point) => [point.username, point])
+    );
+    const filter = { email: { $in: pointUsernames } };
+    const dateRange = buildDateRange(req.query);
+
+    if (dateRange) filter.createdAt = dateRange;
+    if (status) filter.status = status;
+    if (paymentType) filter.paymentType = paymentType;
+    if (search) {
+      const searchRegex = new RegExp(escapeRegex(search), 'i');
+      filter.$or = [
+        { landline: searchRegex },
+        { company: searchRegex },
+        { speed: searchRegex },
+        { email: searchRegex },
+      ];
+    }
+
+    const [payments, total] = await Promise.all([
+      Payment.find(filter)
+        .select(PAYMENT_FIELDS)
+        .sort({ createdAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Payment.countDocuments(filter),
+    ]);
+
+    const enrichedPayments = payments.map((payment) => {
+      const point = pointByUsername.get(payment.email);
+
+      return {
+        ...payment,
+        status: normalizePaymentStatusLabel(payment.status),
+        pointUsername: payment.email,
+        pointOwner: point?.owner || '',
+      };
+    });
+
+    res.json(paginatedResponse({ data: enrichedPayments, page, limit, total }))
 
   } catch (error) {
     console.error("فشل في جلب عمليات المستخدم:", error);
