@@ -37,7 +37,10 @@ const PENDING_STATUSES = ['جاري التسديد', 'بدء التسديد'];
 const FINAL_STATUSES = ['تم التسديد', 'غير مسددة'];
 const PROVIDER_MANAGED_PENDING_EXCLUSIONS = [
   { 'extra.provider': 'prowave', 'extra.operation_type': 'direct_topup' },
-  { 'extra.provider': 'prowave', 'extra.prowave_operation_type': 'direct_topup' },
+  {
+    'extra.provider': 'prowave',
+    'extra.prowave_operation_type': 'direct_topup',
+  },
 ];
 const ADMIN_PENDING_PAYMENT_FILTER = {
   status: { $in: PENDING_STATUSES },
@@ -142,20 +145,23 @@ const getPaymentOperationType = (payment = {}) => {
 
 const isProviderManagedDirectTopUpPayment = (payment = {}) =>
   payment.extra?.provider === 'prowave' &&
-  (
-    payment.extra?.operation_type === 'direct_topup' ||
-    payment.extra?.prowave_operation_type === 'direct_topup'
-  );
+  (payment.extra?.operation_type === 'direct_topup' ||
+    payment.extra?.prowave_operation_type === 'direct_topup');
 
 const emitPendingPayments = async (req) => {
   const io = req.app.get('io');
   if (!io) return;
 
-  const pendingPayments = await InternetPayment.find(ADMIN_PENDING_PAYMENT_FILTER)
+  const pendingPayments = await InternetPayment.find(
+    ADMIN_PENDING_PAYMENT_FILTER
+  )
     .select(PAYMENT_FIELDS)
     .sort({ createdAt: -1 })
     .lean();
-  io.emit('pendingPaymentsUpdate', sanitizePaymentsStatusForResponse(pendingPayments));
+  io.emit(
+    'pendingPaymentsUpdate',
+    sanitizePaymentsStatusForResponse(pendingPayments)
+  );
 };
 
 router.get('/pending', authMiddleware, async (req, res) => {
@@ -229,19 +235,32 @@ router.get('/user/confirmed', authMiddleware, async (req, res) => {
     const pointTransferClauses = [{ destination: userEmail }];
     if (req.query.search) {
       const search = new RegExp(escapeRegex(req.query.search), 'i');
-      paymentFilter.$or = [{ landline: search }, { company: search }, { email: search }];
-      const balanceSearch = { $or: [{ name: search }, { destination: search }, { operator: search }] };
+      paymentFilter.$or = [
+        { landline: search },
+        { company: search },
+        { email: search },
+      ];
+      const balanceSearch = {
+        $or: [{ name: search }, { destination: search }, { operator: search }],
+      };
       balanceClauses.push(balanceSearch);
       pointTransferClauses.push(balanceSearch);
     }
     if (dateRange) {
-      const balanceDate = { $or: [{ date: dateRange }, { createdAt: dateRange }] };
+      const balanceDate = {
+        $or: [{ date: dateRange }, { createdAt: dateRange }],
+      };
       balanceClauses.push(balanceDate);
       pointTransferClauses.push(balanceDate);
     }
-    const balanceFilter = balanceClauses.length === 1 ? balanceClauses[0] : { $and: balanceClauses };
+    const balanceFilter =
+      balanceClauses.length === 1
+        ? balanceClauses[0]
+        : { $and: balanceClauses };
     const pointTransferFilter =
-      pointTransferClauses.length === 1 ? pointTransferClauses[0] : { $and: pointTransferClauses };
+      pointTransferClauses.length === 1
+        ? pointTransferClauses[0]
+        : { $and: pointTransferClauses };
 
     const [payments, batchpayments, pointTransfers] = await Promise.all([
       InternetPayment.find(paymentFilter)
@@ -299,7 +318,11 @@ router.get('/user/confirmed', authMiddleware, async (req, res) => {
       source: 'point-transfer',
     }));
 
-    const allData = [...paymentWithType, ...batchWithType, ...pointTransferWithType];
+    const allData = [
+      ...paymentWithType,
+      ...batchWithType,
+      ...pointTransferWithType,
+    ];
 
     allData.sort((a, b) => {
       const da = new Date(a.updatedAt || a.createdAt || 0).getTime();
@@ -347,7 +370,10 @@ router.put('/payment/:id', async (req, res) => {
     }
     await invalidateReports();
 
-    res.json({ message: 'تم تحديث نوع الدفع بنجاح', payment: sanitizePaymentStatusForResponse(updatedPayment) });
+    res.json({
+      message: 'تم تحديث نوع الدفع بنجاح',
+      payment: sanitizePaymentStatusForResponse(updatedPayment),
+    });
   } catch (error) {
     console.error(error);
     res.status(500).json({ message: 'حدث خطأ في السيرفر' });
@@ -357,7 +383,9 @@ router.put('/payment/:id', async (req, res) => {
 router.get('/user/allconfirmed', authMiddleware, async (req, res) => {
   try {
     const { page, limit, skip } = getPagination(req.query);
-    const filter = buildPaymentFilters(req.query, { status: { $in: FINAL_STATUSES } });
+    const filter = buildPaymentFilters(req.query, {
+      status: { $in: FINAL_STATUSES },
+    });
     const [payments, total] = await Promise.all([
       InternetPayment.find(filter)
         .select(PAYMENT_FIELDS)
@@ -368,7 +396,14 @@ router.get('/user/allconfirmed', authMiddleware, async (req, res) => {
       InternetPayment.countDocuments(filter),
     ]);
 
-    res.json(paginatedResponse({ data: sanitizePaymentsStatusForResponse(payments), page, limit, total }));
+    res.json(
+      paginatedResponse({
+        data: sanitizePaymentsStatusForResponse(payments),
+        page,
+        limit,
+        total,
+      })
+    );
   } catch (error) {
     console.error('فشل في جلب عمليات المستخدم:', error);
     res.status(500).json({ message: 'حدث خطأ في الخادم' });
@@ -420,7 +455,9 @@ router.post('/reject/:id', async (req, res) => {
     }
 
     if (isProviderManagedDirectTopUpPayment(payment)) {
-      return res.status(400).json({ message: PROVIDER_MANAGED_PAYMENT_MESSAGE });
+      return res
+        .status(400)
+        .json({ message: PROVIDER_MANAGED_PAYMENT_MESSAGE });
     }
 
     // 1. تحديث العملية إلى "غير مسددة" مع سبب
@@ -469,157 +506,164 @@ router.get('/all-user', authMiddleware, async (req, res) => {
 
 router.get('/getPOSBalanceReport', authMiddleware, async (req, res) => {
   try {
-    const report = await getOrSet(cacheKey('report:pos-balance', req.query), 300, () =>
-      User.aggregate([
-        {
-          $lookup: {
-            from: 'harams',
-            localField: '_id',
-            foreignField: 'user',
-            as: 'deposits',
-          },
-        },
-        {
-          $lookup: {
-            from: 'payments',
-            let: { userId: '$_id' },
-            pipeline: [
-              {
-                $match: {
-                  $expr: { $eq: ['$user', '$$userId'] },
-                },
-              },
-              {
-                $group: {
-                  _id: '$status',
-                  total: { $sum: '$amount' },
-                },
-              },
-            ],
-            as: 'expensesByStatus',
-          },
-        },
-        {
-          $addFields: {
-            confirmedDeposits: {
-              $sum: {
-                $map: {
-                  input: {
-                    $filter: {
-                      input: '$deposits',
-                      as: 'deposit',
-                      cond: { $eq: ['$$deposit.isConfirmed', true] },
-                    },
-                  },
-                  as: 'deposit',
-                  in: '$$deposit.amount',
-                },
-              },
-            },
-            unconfirmedDeposits: {
-              $sum: {
-                $map: {
-                  input: {
-                    $filter: {
-                      input: '$deposits',
-                      as: 'deposit',
-                      cond: { $eq: ['$$deposit.isConfirmed', false] },
-                    },
-                  },
-                  as: 'deposit',
-                  in: '$$deposit.amount',
-                },
-              },
-            },
-            totalDeposits: { $sum: '$deposits.amount' },
-          },
-        },
-        {
-          $addFields: {
-            expensesPaid: {
-              $sum: {
-                $map: {
-                  input: {
-                    $filter: {
-                      input: '$expensesByStatus',
-                      as: 'expense',
-                      cond: { $eq: ['$$expense._id', 'تم التسديد'] },
-                    },
-                  },
-                  as: 'expense',
-                  in: '$$expense.total',
-                },
-              },
-            },
-            expensesUnpaid: {
-              $sum: {
-                $map: {
-                  input: {
-                    $filter: {
-                      input: '$expensesByStatus',
-                      as: 'expense',
-                      cond: { $eq: ['$$expense._id', 'غير مسددة'] },
-                    },
-                  },
-                  as: 'expense',
-                  in: '$$expense.total',
-                },
-              },
-            },
-            expensesInProgress: {
-              $sum: {
-                $map: {
-                  input: {
-                    $filter: {
-                      input: '$expensesByStatus',
-                      as: 'expense',
-                      cond: { $in: ['$$expense._id', PENDING_STATUSES] },
-                    },
-                  },
-                  as: 'expense',
-                  in: '$$expense.total',
-                },
-              },
+    const report = await getOrSet(
+      cacheKey('report:pos-balance', req.query),
+      300,
+      () =>
+        User.aggregate([
+          {
+            $lookup: {
+              from: 'harams',
+              localField: '_id',
+              foreignField: 'user',
+              as: 'deposits',
             },
           },
-        },
-        {
-          $addFields: {
-            totalExpenses: {
-              $add: ['$expensesPaid', '$expensesUnpaid', '$expensesInProgress'],
-            },
-          },
-        },
-        {
-          $addFields: {
-            netBalance: {
-              $subtract: ['$totalDeposits', '$totalExpenses'],
-            },
-            finalBalance: {
-              $add: [
-                { $subtract: ['$totalDeposits', '$totalExpenses'] },
-                { $ifNull: ['$balance', 0] },
+          {
+            $lookup: {
+              from: 'payments',
+              let: { userId: '$_id' },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: { $eq: ['$user', '$$userId'] },
+                  },
+                },
+                {
+                  $group: {
+                    _id: '$status',
+                    total: { $sum: '$amount' },
+                  },
+                },
               ],
+              as: 'expensesByStatus',
             },
           },
-        },
-        {
-          $project: {
-            name: 1,
-            email: 1,
-            balance: 1,
-            totalDeposits: 1,
-            confirmedDeposits: 1,
-            unconfirmedDeposits: 1,
-            expensesPaid: 1,
-            expensesUnpaid: 1,
-            expensesInProgress: 1,
-            totalExpenses: 1,
-            netBalance: 1,
-            finalBalance: 1,
+          {
+            $addFields: {
+              confirmedDeposits: {
+                $sum: {
+                  $map: {
+                    input: {
+                      $filter: {
+                        input: '$deposits',
+                        as: 'deposit',
+                        cond: { $eq: ['$$deposit.isConfirmed', true] },
+                      },
+                    },
+                    as: 'deposit',
+                    in: '$$deposit.amount',
+                  },
+                },
+              },
+              unconfirmedDeposits: {
+                $sum: {
+                  $map: {
+                    input: {
+                      $filter: {
+                        input: '$deposits',
+                        as: 'deposit',
+                        cond: { $eq: ['$$deposit.isConfirmed', false] },
+                      },
+                    },
+                    as: 'deposit',
+                    in: '$$deposit.amount',
+                  },
+                },
+              },
+              totalDeposits: { $sum: '$deposits.amount' },
+            },
           },
-        },
-      ])
+          {
+            $addFields: {
+              expensesPaid: {
+                $sum: {
+                  $map: {
+                    input: {
+                      $filter: {
+                        input: '$expensesByStatus',
+                        as: 'expense',
+                        cond: { $eq: ['$$expense._id', 'تم التسديد'] },
+                      },
+                    },
+                    as: 'expense',
+                    in: '$$expense.total',
+                  },
+                },
+              },
+              expensesUnpaid: {
+                $sum: {
+                  $map: {
+                    input: {
+                      $filter: {
+                        input: '$expensesByStatus',
+                        as: 'expense',
+                        cond: { $eq: ['$$expense._id', 'غير مسددة'] },
+                      },
+                    },
+                    as: 'expense',
+                    in: '$$expense.total',
+                  },
+                },
+              },
+              expensesInProgress: {
+                $sum: {
+                  $map: {
+                    input: {
+                      $filter: {
+                        input: '$expensesByStatus',
+                        as: 'expense',
+                        cond: { $in: ['$$expense._id', PENDING_STATUSES] },
+                      },
+                    },
+                    as: 'expense',
+                    in: '$$expense.total',
+                  },
+                },
+              },
+            },
+          },
+          {
+            $addFields: {
+              totalExpenses: {
+                $add: [
+                  '$expensesPaid',
+                  '$expensesUnpaid',
+                  '$expensesInProgress',
+                ],
+              },
+            },
+          },
+          {
+            $addFields: {
+              netBalance: {
+                $subtract: ['$totalDeposits', '$totalExpenses'],
+              },
+              finalBalance: {
+                $add: [
+                  { $subtract: ['$totalDeposits', '$totalExpenses'] },
+                  { $ifNull: ['$balance', 0] },
+                ],
+              },
+            },
+          },
+          {
+            $project: {
+              name: 1,
+              email: 1,
+              balance: 1,
+              totalDeposits: 1,
+              confirmedDeposits: 1,
+              unconfirmedDeposits: 1,
+              expensesPaid: 1,
+              expensesUnpaid: 1,
+              expensesInProgress: 1,
+              totalExpenses: 1,
+              netBalance: 1,
+              finalBalance: 1,
+            },
+          },
+        ])
     );
 
     res.status(200).json(report);
@@ -634,39 +678,46 @@ router.get('/getPOSBalanceReport', authMiddleware, async (req, res) => {
 
 router.get('/newPosBalanceReport', async (req, res) => {
   try {
-    const allData = await getOrSet(cacheKey('report:new-pos-balance', req.query), 300, async () => {
-      const [allUsers, internetTotals, batchTotals] = await Promise.all([
-        User.find().select('name email balance').lean(),
-        InternetPayment.aggregate([
-          { $group: { _id: '$user', totalInternet: { $sum: '$amount' } } },
-        ]),
-        Balance.aggregate([
-          { $group: { _id: '$user', totalBatch: { $sum: '$amount' } } },
-        ]),
-      ]);
+    const allData = await getOrSet(
+      cacheKey('report:new-pos-balance', req.query),
+      300,
+      async () => {
+        const [allUsers, internetTotals, batchTotals] = await Promise.all([
+          User.find().select('name email balance').lean(),
+          InternetPayment.aggregate([
+            { $group: { _id: '$user', totalInternet: { $sum: '$amount' } } },
+          ]),
+          Balance.aggregate([
+            { $group: { _id: '$user', totalBatch: { $sum: '$amount' } } },
+          ]),
+        ]);
 
-      const internetByUser = new Map(
-        internetTotals.map((item) => [String(item._id), item.totalInternet || 0])
-      );
-      const batchByUser = new Map(
-        batchTotals.map((item) => [String(item._id), item.totalBatch || 0])
-      );
+        const internetByUser = new Map(
+          internetTotals.map((item) => [
+            String(item._id),
+            item.totalInternet || 0,
+          ])
+        );
+        const batchByUser = new Map(
+          batchTotals.map((item) => [String(item._id), item.totalBatch || 0])
+        );
 
-      return allUsers.map((user) => {
-        const key = String(user._id);
-        const totalInternet = internetByUser.get(key) || 0;
-        const totalBatch = batchByUser.get(key) || 0;
-        return {
-          userId: user._id,
-          userName: user.name,
-          userEmail: user.email,
-          balance: user.balance,
-          totalInternet,
-          totalBatch,
-          total: totalInternet + totalBatch,
-        };
-      });
-    });
+        return allUsers.map((user) => {
+          const key = String(user._id);
+          const totalInternet = internetByUser.get(key) || 0;
+          const totalBatch = batchByUser.get(key) || 0;
+          return {
+            userId: user._id,
+            userName: user.name,
+            userEmail: user.email,
+            balance: user.balance,
+            totalInternet,
+            totalBatch,
+            total: totalInternet + totalBatch,
+          };
+        });
+      }
+    );
 
     res.json(allData);
   } catch (error) {
@@ -758,7 +809,9 @@ router.put('/updateuser/:id', async (req, res) => {
   try {
     const updateUser = await User.findByIdAndUpdate(id, req.body, {
       new: true,
-    }).select(USER_FIELDS).lean();
+    })
+      .select(USER_FIELDS)
+      .lean();
     await invalidateReports();
     res.status(200).json(updateUser);
   } catch (err) {
@@ -812,7 +865,9 @@ router.get('/daen', authMiddleware, async (req, res) => {
         .lean(),
       Balance.countDocuments(filter),
     ]);
-    res.status(201).json(paginatedResponse({ data: daenBalance, page, limit, total }));
+    res
+      .status(201)
+      .json(paginatedResponse({ data: daenBalance, page, limit, total }));
   } catch (err) {
     res.status(401).json(err);
   }
@@ -850,31 +905,45 @@ router.post('/confirm-daen', async (req, res) => {
     res.status(500).json({ message: 'حدث خطأ أثناء معالجة الطلب' });
   }
 });
-
 router.get('/payments/bydate', authMiddleware, async (req, res) => {
   try {
-    // استلام التاريخين من الفرونت
-    const { fromDate, toDate } = req.query;
+    const { fromDate, toDate, pagination } = req.query;
 
-    // التحقق من وجود التاريخين
     if (!fromDate || !toDate) {
       return res
         .status(400)
         .json({ message: 'يرجى إرسال تاريخ البداية والنهاية' });
     }
 
-    // تحويل النصوص إلى كائنات Date
     const start = new Date(fromDate);
     const end = new Date(toDate);
 
-    // ضبط نهاية اليوم الأخير لتشمل كامل اليوم
     end.setHours(23, 59, 59, 999);
 
-    const { page, limit, skip } = getPagination(req.query);
     const filter = {
       status: { $in: FINAL_STATUSES },
       createdAt: { $gte: start, $lte: end },
     };
+
+    // pagination=false فقط هو الذي يعطل الـ pagination
+    const paginationDisabled = pagination === 'false';
+
+    // بدون Pagination
+    if (paginationDisabled) {
+      const payments = await InternetPayment.find(filter)
+        .select(PAYMENT_FIELDS)
+        .sort({ createdAt: -1 })
+        .lean();
+
+      return res.json({
+        data: sanitizePaymentsStatusForResponse(payments),
+        pagination: null,
+      });
+    }
+
+    // السلوك الحالي - Pagination
+    const { page, limit, skip } = getPagination(req.query);
+
     const [payments, total] = await Promise.all([
       InternetPayment.find(filter)
         .select(PAYMENT_FIELDS)
@@ -882,13 +951,24 @@ router.get('/payments/bydate', authMiddleware, async (req, res) => {
         .skip(skip)
         .limit(limit)
         .lean(),
+
       InternetPayment.countDocuments(filter),
     ]);
 
-    res.json(paginatedResponse({ data: sanitizePaymentsStatusForResponse(payments), page, limit, total }));
+    res.json(
+      paginatedResponse({
+        data: sanitizePaymentsStatusForResponse(payments),
+        page,
+        limit,
+        total,
+      })
+    );
   } catch (error) {
     console.error('فشل في جلب عمليات المستخدم حسب التاريخ:', error);
-    res.status(500).json({ message: 'حدث خطأ في الخادم' });
+
+    res.status(500).json({
+      message: 'حدث خطأ في الخادم',
+    });
   }
 });
 
@@ -934,47 +1014,64 @@ router.get('/report/balanceNeed', async (req, res) => {
       'الجمعية',
     ];
 
-    const cachedReport = await getOrSet(cacheKey('report:balance-need', req.query), 300, async () => {
-      const stats = await getDailyStatsRange(start, end);
-      const hasPaymentStats = stats.some((stat) => stat.payments?.total?.count > 0);
+    const cachedReport = await getOrSet(
+      cacheKey('report:balance-need', req.query),
+      300,
+      async () => {
+        const stats = await getDailyStatsRange(start, end);
+        const hasPaymentStats = stats.some(
+          (stat) => stat.payments?.total?.count > 0
+        );
 
-      if (hasPaymentStats) {
-        const byCompany = {};
-        companies.forEach((company) => {
-          byCompany[company] = { company, totalAmount: 0, avgOnDayAmount: 0, count: 0 };
-        });
-
-        let totalPayments = 0;
-        let grandTotalFromStats = 0;
-
-        stats.forEach((stat) => {
-          const companyStats = stat.payments?.byCompany || {};
+        if (hasPaymentStats) {
+          const byCompany = {};
           companies.forEach((company) => {
-            const entry = companyStats.get?.(cleanMapKey(company)) || companyStats[cleanMapKey(company)];
-            if (!entry) return;
-            byCompany[company].totalAmount += entry.amount || 0;
-            byCompany[company].count += entry.count || 0;
-            grandTotalFromStats += entry.amount || 0;
-            totalPayments += entry.count || 0;
+            byCompany[company] = {
+              company,
+              totalAmount: 0,
+              avgOnDayAmount: 0,
+              count: 0,
+            };
           });
-        });
 
-        Object.values(byCompany).forEach((company) => {
-          company.avgOnDayAmount = Number((company.totalAmount / totalDays).toFixed(2));
-        });
+          let totalPayments = 0;
+          let grandTotalFromStats = 0;
 
-        return {
-          fromDate,
-          toDate,
-          totalDays,
-          totalPayments,
-          grandTotal: grandTotalFromStats,
-          companies: Object.values(byCompany).sort((a, b) => b.totalAmount - a.totalAmount),
-        };
+          stats.forEach((stat) => {
+            const companyStats = stat.payments?.byCompany || {};
+            companies.forEach((company) => {
+              const entry =
+                companyStats.get?.(cleanMapKey(company)) ||
+                companyStats[cleanMapKey(company)];
+              if (!entry) return;
+              byCompany[company].totalAmount += entry.amount || 0;
+              byCompany[company].count += entry.count || 0;
+              grandTotalFromStats += entry.amount || 0;
+              totalPayments += entry.count || 0;
+            });
+          });
+
+          Object.values(byCompany).forEach((company) => {
+            company.avgOnDayAmount = Number(
+              (company.totalAmount / totalDays).toFixed(2)
+            );
+          });
+
+          return {
+            fromDate,
+            toDate,
+            totalDays,
+            totalPayments,
+            grandTotal: grandTotalFromStats,
+            companies: Object.values(byCompany).sort(
+              (a, b) => b.totalAmount - a.totalAmount
+            ),
+          };
+        }
+
+        return null;
       }
-
-      return null;
-    });
+    );
 
     if (cachedReport) {
       return res.json(cachedReport);
