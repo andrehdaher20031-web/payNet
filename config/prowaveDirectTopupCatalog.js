@@ -32,7 +32,7 @@ const DEFAULT_DIRECT_TOPUP_CATALOG = [
     titleAr: 'شحن PUBG 60 UC مباشر',
     description: 'Direct PUBG Mobile top-up by player ID.',
     salePriceUsd: 1.25,
-    providerCostUsd: 1.07,
+    providerCostUsd: 1,
     sortOrder: 10,
   }),
   directTopUpItem({
@@ -42,6 +42,7 @@ const DEFAULT_DIRECT_TOPUP_CATALOG = [
     titleAr: 'شحن PUBG 325 UC مباشر',
     description: 'Direct PUBG Mobile top-up by player ID.',
     salePriceUsd: 5.3,
+    providerCostUsd: 5,
     sortOrder: 20,
   }),
   directTopUpItem({
@@ -51,6 +52,7 @@ const DEFAULT_DIRECT_TOPUP_CATALOG = [
     titleAr: 'شحن PUBG 660 UC مباشر',
     description: 'Direct PUBG Mobile top-up by player ID.',
     salePriceUsd: 10.53,
+    providerCostUsd: 10,
     sortOrder: 30,
   }),
   directTopUpItem({
@@ -125,6 +127,7 @@ const DEFAULT_DIRECT_TOPUP_CATALOG = [
     titleAr: 'شحن Free Fire 110 + 10 Diamond مباشر',
     description: 'Direct Free Fire top-up by player ID.',
     salePriceUsd: 1.1,
+    providerCostUsd: 1,
     sortOrder: 110,
   }),
   directTopUpItem({
@@ -134,6 +137,7 @@ const DEFAULT_DIRECT_TOPUP_CATALOG = [
     titleAr: 'شحن Free Fire 210 + 21 Diamond مباشر',
     description: 'Direct Free Fire top-up by player ID.',
     salePriceUsd: 2.19,
+    providerCostUsd: 2,
     sortOrder: 120,
   }),
   directTopUpItem({
@@ -143,6 +147,7 @@ const DEFAULT_DIRECT_TOPUP_CATALOG = [
     titleAr: 'شحن Free Fire 530 + 53 Diamond مباشر',
     description: 'Direct Free Fire top-up by player ID.',
     salePriceUsd: 5.47,
+    providerCostUsd: 5,
     sortOrder: 130,
   }),
   directTopUpItem({
@@ -152,6 +157,7 @@ const DEFAULT_DIRECT_TOPUP_CATALOG = [
     titleAr: 'شحن Free Fire 1080 + 108 Diamond مباشر',
     description: 'Direct Free Fire top-up by player ID.',
     salePriceUsd: 10.88,
+    providerCostUsd: 10,
     sortOrder: 140,
   }),
   directTopUpItem({
@@ -161,6 +167,7 @@ const DEFAULT_DIRECT_TOPUP_CATALOG = [
     titleAr: 'شحن Free Fire 2200 + 220 Diamond مباشر',
     description: 'Direct Free Fire top-up by player ID.',
     salePriceUsd: 21.8,
+    providerCostUsd: 20,
     sortOrder: 150,
   }),
   directTopUpItem({

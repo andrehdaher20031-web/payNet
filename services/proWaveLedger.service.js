@@ -1,7 +1,13 @@
 const ProWaveTransaction = require('../models/ProWaveTransaction');
+const { findDirectTopUpCatalogItem } = require('../config/prowaveDirectTopupCatalog');
 
 const PROVIDER_DEBIT_TOLERANCE_USD =
   Number(process.env.PROWAVE_PROVIDER_DEBIT_TOLERANCE_USD) || 0.01;
+const DIRECT_TOPUP_PROVIDER_DEBIT_TOLERANCE_USD =
+  Number(process.env.PROWAVE_DIRECT_TOPUP_DEBIT_TOLERANCE_USD) || 0.1;
+const DIRECT_TOPUP_PROVIDER_DEBIT_TOLERANCE_PERCENT =
+  Number(process.env.PROWAVE_DIRECT_TOPUP_DEBIT_TOLERANCE_PERCENT) || 5;
+const DIRECT_TOPUP_OPERATION = 'direct_topup';
 
 const toNumber = (value, fallback = null) => {
   const normalized =
@@ -150,11 +156,64 @@ const extractProviderInvoices = (responseData) => {
   return arrays.sort((a, b) => b.length - a.length)[0]?.filter(isPlainObject) || [];
 };
 
-const getProviderDebitStatus = ({ expected, actual }) => {
+const getProviderDebitToleranceUsd = ({ expected, operationType }) => {
+  if (operationType !== DIRECT_TOPUP_OPERATION) return PROVIDER_DEBIT_TOLERANCE_USD;
+
+  const percentTolerance =
+    (Math.abs(Number(expected || 0)) * DIRECT_TOPUP_PROVIDER_DEBIT_TOLERANCE_PERCENT) / 100;
+
+  return Math.max(DIRECT_TOPUP_PROVIDER_DEBIT_TOLERANCE_USD, percentTolerance);
+};
+
+const getProviderDebitStatus = ({ expected, actual, operationType }) => {
   if (actual === null || actual === undefined) return 'unavailable';
-  return Math.abs(Number(expected || 0) - Number(actual || 0)) <= PROVIDER_DEBIT_TOLERANCE_USD
+  const difference = toRoundedNumber(Math.abs(Number(expected || 0) - Number(actual || 0)));
+  const tolerance = toRoundedNumber(getProviderDebitToleranceUsd({ expected, operationType }));
+
+  return difference <= tolerance
     ? 'matched'
     : 'mismatch';
+};
+
+const getEffectiveExpectedProviderDebitUsd = (transaction = {}) => {
+  const fallback = toRoundedNumber(transaction.expectedProviderDebitUsd);
+
+  if (transaction.operationType !== DIRECT_TOPUP_OPERATION) return fallback;
+
+  const catalogItem = findDirectTopUpCatalogItem({
+    game: transaction.game,
+    item_code: transaction.itemCode,
+    recharge_category: transaction.rechargeCategory,
+  });
+  const providerCostUsd = toNumber(catalogItem?.provider_cost_usd);
+  const quantity = Number(transaction.qty || 1);
+
+  if (providerCostUsd === null || providerCostUsd <= 0 || quantity <= 0) return fallback;
+
+  return toRoundedNumber(providerCostUsd * quantity);
+};
+
+const applyExpectedProviderDebitUsd = (transaction, expectedProviderDebitUsd) => {
+  if (!transaction || expectedProviderDebitUsd === null || expectedProviderDebitUsd === undefined) return;
+  if (transaction.operationType !== DIRECT_TOPUP_OPERATION) return;
+  if (Number(transaction.expectedProviderDebitUsd) === Number(expectedProviderDebitUsd)) return;
+
+  const quantity = Number(transaction.qty || 1);
+  const providerUnitCostUsd =
+    quantity > 0 ? toRoundedNumber(Number(expectedProviderDebitUsd) / quantity) : null;
+  const saleUnitPriceUsd = Number(transaction.saleUnitPriceUsd || transaction.unitPriceUsd || 0);
+  const providerDiscountUsd = toRoundedNumber(
+    Math.max(0, saleUnitPriceUsd - Number(providerUnitCostUsd || 0))
+  );
+  const providerDiscountPercent =
+    saleUnitPriceUsd > 0
+      ? toRoundedNumber((Number(providerDiscountUsd || 0) / saleUnitPriceUsd) * 100)
+      : 0;
+
+  transaction.expectedProviderDebitUsd = expectedProviderDebitUsd;
+  if (providerUnitCostUsd !== null) transaction.providerUnitCostUsd = providerUnitCostUsd;
+  transaction.providerDiscountUsd = providerDiscountUsd;
+  transaction.providerDiscountPercent = providerDiscountPercent;
 };
 
 const calculateFinancials = ({
@@ -333,15 +392,19 @@ const markCompletedTransaction = async (
     balanceBefore !== null && balanceAfter !== null
       ? toRoundedNumber(balanceBefore - balanceAfter)
       : null;
-  const actualCostUsd = invoiceProviderDebitUsd || actualProviderDebitUsd || transaction.expectedProviderDebitUsd;
+  const expectedProviderDebitUsd = getEffectiveExpectedProviderDebitUsd(transaction);
+  applyExpectedProviderDebitUsd(transaction, expectedProviderDebitUsd);
+  const actualCostUsd = invoiceProviderDebitUsd || actualProviderDebitUsd || expectedProviderDebitUsd;
   const providerBalanceStatus = getProviderDebitStatus({
-    expected: transaction.expectedProviderDebitUsd,
+    expected: expectedProviderDebitUsd,
     actual: actualProviderDebitUsd,
+    operationType: transaction.operationType,
   });
   const invoiceMatchStatus = invoiceProviderDebitUsd
     ? getProviderDebitStatus({
-        expected: transaction.expectedProviderDebitUsd,
+        expected: expectedProviderDebitUsd,
         actual: invoiceProviderDebitUsd,
+        operationType: transaction.operationType,
       })
     : 'pending';
   const financials = calculateFinancials({
@@ -353,7 +416,7 @@ const markCompletedTransaction = async (
     providerBalanceStatus,
     invoiceMatchStatus,
     hasInvoice: Boolean(prowaveInvoice),
-    expectedProviderDebitUsd: transaction.expectedProviderDebitUsd,
+    expectedProviderDebitUsd,
     actualProviderDebitUsd,
     invoiceProviderDebitUsd,
   });
@@ -554,6 +617,8 @@ const reconcileTransactionsWithInvoices = async (providerInvoicesResponse) => {
 
   for (const transaction of transactions) {
     const invoice = invoiceByName.get(String(transaction.prowaveInvoice || ''));
+    const expectedProviderDebitUsd = getEffectiveExpectedProviderDebitUsd(transaction);
+    applyExpectedProviderDebitUsd(transaction, expectedProviderDebitUsd);
 
     if (!invoice) {
       transaction.invoiceMatchStatus = 'missing';
@@ -561,7 +626,7 @@ const reconcileTransactionsWithInvoices = async (providerInvoicesResponse) => {
       transaction.mismatchReason = buildMismatchReason({
         providerBalanceStatus: transaction.providerBalanceStatus,
         invoiceMatchStatus: 'missing',
-        expectedProviderDebitUsd: transaction.expectedProviderDebitUsd,
+        expectedProviderDebitUsd,
         actualProviderDebitUsd: transaction.actualProviderDebitUsd,
         hasInvoice: Boolean(transaction.prowaveInvoice),
       });
@@ -572,8 +637,9 @@ const reconcileTransactionsWithInvoices = async (providerInvoicesResponse) => {
 
     const invoiceProviderDebitUsd = getInvoiceAmountUsd(invoice);
     const invoiceMatchStatus = getProviderDebitStatus({
-      expected: transaction.expectedProviderDebitUsd,
+      expected: expectedProviderDebitUsd,
       actual: invoiceProviderDebitUsd,
+      operationType: transaction.operationType,
     });
     const financials = calculateFinancials({
       paynetAmountSyp: transaction.paynetAmountSyp,
@@ -584,7 +650,7 @@ const reconcileTransactionsWithInvoices = async (providerInvoicesResponse) => {
       providerBalanceStatus: transaction.providerBalanceStatus,
       invoiceMatchStatus,
       hasInvoice: true,
-      expectedProviderDebitUsd: transaction.expectedProviderDebitUsd,
+      expectedProviderDebitUsd,
       actualProviderDebitUsd: transaction.actualProviderDebitUsd,
       invoiceProviderDebitUsd,
     });
