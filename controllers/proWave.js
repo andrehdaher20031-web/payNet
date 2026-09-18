@@ -42,6 +42,12 @@ const PROWAVE_DIRECT_TOPUP_STATUS_INTERVAL_MS =
   Number(process.env.PROWAVE_DIRECT_TOPUP_STATUS_INTERVAL_MS) || 0;
 const PROWAVE_DIRECT_TOPUP_STATUS_BATCH_LIMIT =
   Number(process.env.PROWAVE_DIRECT_TOPUP_STATUS_BATCH_LIMIT) || 25;
+const PROWAVE_DIRECT_TOPUP_FOLLOW_UP_REFRESH_DELAYS_MS = String(
+  process.env.PROWAVE_DIRECT_TOPUP_FOLLOW_UP_REFRESH_DELAYS_MS || '10000,30000,60000'
+)
+  .split(',')
+  .map((value) => Number(value.trim()))
+  .filter((value) => Number.isFinite(value) && value > 0);
 const PROWAVE_DIRECT_TOPUP_REQUIRE_PROVIDER_ITEM_CODE =
   process.env.PROWAVE_DIRECT_TOPUP_REQUIRE_PROVIDER_ITEM_CODE !== 'false';
 const PAYMENT_FIELDS =
@@ -79,6 +85,7 @@ let proWavePurchaseLock = Promise.resolve();
 let reconciliationSchedulerStarted = false;
 let directTopUpStatusSchedulerStarted = false;
 let directTopUpStatusRefreshRunning = false;
+const directTopUpFollowUpRefreshes = new Set();
 
 const getProWaveHeaders = () => {
   const { PROWAVE_API_KEY, PROWAVE_API_SECRET } = process.env;
@@ -102,6 +109,12 @@ const toNumber = (value, fallback) => {
 
 const getFirstPresent = (...values) =>
   values.find((value) => value !== undefined && value !== null && value !== '');
+
+const normalizeClientRequestId = (value) => {
+  const normalized = String(value || '').trim();
+  if (!normalized) return '';
+  return normalized.slice(0, 128);
+};
 
 const toPositiveNumber = (...values) =>
   values.map((value) => toNumber(value, 0)).find((value) => value > 0) || 0;
@@ -703,6 +716,10 @@ const isDirectTopUpFailedStatus = (status) => {
   );
 };
 
+const isDirectTopUpCompletedResult = ({ rechargeStatus, invoiceName }) =>
+  !isDirectTopUpFailedStatus(rechargeStatus) &&
+  (isDirectTopUpCompletedStatus(rechargeStatus) || Boolean(invoiceName));
+
 const getDirectTopUpProviderPriceUsd = (requestData = {}) =>
   toPositiveNumber(
     requestData.price,
@@ -797,6 +814,7 @@ const buildDirectTopUpResultData = ({
   proWaveResponseData,
   proWaveMessage,
   warning,
+  duplicate,
 }) => {
   const requestName = getDirectTopUpRequestName(requestData);
   const rechargeStatus = getDirectTopUpRechargeStatus(requestData);
@@ -810,14 +828,28 @@ const buildDirectTopUpResultData = ({
     recharge_status: rechargeStatus,
     rejection_reason: getDirectTopUpRejectionReason(requestData),
     prowave_message: proWaveMessage,
+    payment_status: payment?.status,
+    customer_status: payment?.status,
     payment_id: payment?._id,
     paynet_currency: PAYNET_CURRENCY,
     paynet_amount_syp: amountToDeduct,
     newBalance: reservedUser?.balance,
     payment: sanitizePaymentForCustomer(payment),
     warning,
+    duplicate,
   };
 };
+
+const buildDirectTopUpRequestDataFromTransaction = (transaction = {}) => ({
+  name: transaction.prowaveRequestName,
+  request_name: transaction.prowaveRequestName,
+  recharge_status: transaction.rechargeStatus,
+  rejection_reason: transaction.rejectionReason,
+  sales_invoice: transaction.prowaveInvoice,
+  game: transaction.game,
+  player_id: transaction.playerId,
+  recharge_category: transaction.rechargeCategory,
+});
 
 const updateDirectTopUpTransaction = async (
   transactionId,
@@ -968,8 +1000,8 @@ const refreshDirectTopUpTransactionStatus = async (transaction) => {
   const invoiceName = getInvoiceName(requestData, responseData);
   const invoiceAmountUsd =
     getDirectTopUpProviderPriceUsd(requestData) || getInvoiceAmountUsd(requestData);
-  const isCompleted = isDirectTopUpCompletedStatus(rechargeStatus);
   const isFailed = isDirectTopUpFailedStatus(rechargeStatus);
+  const isCompleted = isDirectTopUpCompletedResult({ rechargeStatus, invoiceName });
   let refundResult = {
     refunded: false,
     user: null,
@@ -1049,6 +1081,36 @@ const refreshDirectTopUpTransactionStatus = async (transaction) => {
     refunded: refundResult.refunded,
     refreshedUser: refundResult.user,
   };
+};
+
+const scheduleDirectTopUpFollowUpRefresh = (transactionId) => {
+  const key = String(transactionId || '');
+  if (!key || directTopUpFollowUpRefreshes.has(key)) return;
+
+  directTopUpFollowUpRefreshes.add(key);
+
+  PROWAVE_DIRECT_TOPUP_FOLLOW_UP_REFRESH_DELAYS_MS.forEach((delayMs, index, delays) => {
+    const timer = setTimeout(async () => {
+      try {
+        const transaction = await ProWaveTransaction.findById(transactionId);
+        if (!transaction || transaction.status !== 'pending' || !transaction.prowaveRequestName) return;
+
+        await refreshDirectTopUpTransactionStatus(transaction);
+        await invalidatePaymentCache();
+      } catch (error) {
+        console.error(
+          `[ProWave] follow-up direct top-up refresh failed for ${transactionId}:`,
+          getFailureMessage(error, error.message)
+        );
+      } finally {
+        if (index === delays.length - 1) {
+          directTopUpFollowUpRefreshes.delete(key);
+        }
+      }
+    }, delayMs);
+
+    timer.unref?.();
+  });
 };
 
 const getAvailabilityState = (responseData) => {
@@ -2531,6 +2593,10 @@ exports.createDirectTopUpRequest = async (req, res) => {
       currency = DEFAULT_PROWAVE_CURRENCY,
       email,
       paymentType = 'cash',
+      client_request_id,
+      clientRequestId,
+      idempotency_key,
+      idempotencyKey,
       extra: bodyExtra,
       ...extraFields
     } = req.body || {};
@@ -2539,6 +2605,9 @@ exports.createDirectTopUpRequest = async (req, res) => {
     const normalizedRequestedItemCode = String(
       item_code || itemCode || recharge_category || rechargeCategory || ''
     ).trim();
+    const clientRequestIdValue = normalizeClientRequestId(
+      getFirstPresent(client_request_id, clientRequestId, idempotency_key, idempotencyKey)
+    );
     const missingParams = [];
 
     if (!normalizedGame) missingParams.push('game');
@@ -2611,6 +2680,35 @@ exports.createDirectTopUpRequest = async (req, res) => {
       });
     }
 
+    if (clientRequestIdValue) {
+      const existingTransaction = await ProWaveTransaction.findOne({
+        user: userId,
+        operationType: DIRECT_TOPUP_OPERATION,
+        clientRequestId: clientRequestIdValue,
+      }).populate('payment');
+
+      if (existingTransaction) {
+        if (existingTransaction.status === 'pending') {
+          scheduleDirectTopUpFollowUpRefresh(existingTransaction._id);
+        }
+
+        return res.status(200).json({
+          success: true,
+          source: PROWAVE_PROVIDER,
+          message: 'Existing direct top-up request returned',
+          data: buildDirectTopUpResultData({
+            requestData: buildDirectTopUpRequestDataFromTransaction(existingTransaction),
+            payment: existingTransaction.payment,
+            amountToDeduct: existingTransaction.paynetAmountSyp,
+            reservedUser: user,
+            proWaveResponseData: existingTransaction.rawDirectTopupStatusResponse,
+            proWaveMessage: 'Existing direct top-up request returned',
+            duplicate: true,
+          }),
+        });
+      }
+    }
+
     const itemTitle =
       catalogItem.title_ar ||
       catalogItem.title ||
@@ -2660,6 +2758,7 @@ exports.createDirectTopUpRequest = async (req, res) => {
         prowave_provider_discount_usd: pricing.providerDiscountUsd,
         prowave_provider_discount_percent: pricing.providerDiscountPercent,
         prowave_catalog_item: catalogItem,
+        client_request_id: clientRequestIdValue || undefined,
         amount_to_deduct: amountToDeduct,
         started_at: new Date().toISOString(),
       },
@@ -2683,6 +2782,7 @@ exports.createDirectTopUpRequest = async (req, res) => {
       paynetUnitAmountSyp: pricing.unitAmountSyp,
       paynetBalanceBeforeSyp: user.balance,
       pricing,
+      clientRequestId: clientRequestIdValue || undefined,
     });
 
     payment.extra = {
@@ -2764,8 +2864,8 @@ exports.createDirectTopUpRequest = async (req, res) => {
     const invoiceName = getInvoiceName(requestData, proWaveResponseData);
     invoiceProviderDebitUsd =
       getDirectTopUpProviderPriceUsd(requestData) || getInvoiceAmountUsd(requestData);
-    const isCompleted = isDirectTopUpCompletedStatus(rechargeStatus);
     const isFailed = isDirectTopUpFailedStatus(rechargeStatus);
+    const isCompleted = isDirectTopUpCompletedResult({ rechargeStatus, invoiceName });
 
     if (isFailed && ledgerTransaction) {
       const refundResult = await refundPayNetBalanceForDirectTopUp(ledgerTransaction);
@@ -2799,7 +2899,7 @@ exports.createDirectTopUpRequest = async (req, res) => {
     };
     await payment.save();
 
-    await updateDirectTopUpTransaction(ledgerTransaction?._id, {
+    const updatedLedgerTransaction = await updateDirectTopUpTransaction(ledgerTransaction?._id, {
       requestData,
       responseData: proWaveResponseData,
       providerBalanceBeforeResponse,
@@ -2811,6 +2911,10 @@ exports.createDirectTopUpRequest = async (req, res) => {
       refunded: paynetRefunded,
       paynetRefundedSyp: paynetRefunded ? amountToDeduct : undefined,
     });
+
+    if (!isCompleted && !isFailed) {
+      scheduleDirectTopUpFollowUpRefresh(updatedLedgerTransaction?._id || ledgerTransaction?._id);
+    }
 
     try {
       await recordPaymentStats(payment, 1);

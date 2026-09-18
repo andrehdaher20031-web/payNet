@@ -19,6 +19,11 @@ const proWaveTransactionSchema = new mongoose.Schema(
       lowercase: true,
       index: true,
     },
+    clientRequestId: {
+      type: String,
+      trim: true,
+      index: true,
+    },
     operationType: {
       type: String,
       enum: ['digital_card', 'direct_topup'],
@@ -141,6 +146,16 @@ const proWaveTransactionSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    internalReviewStatus: {
+      type: String,
+      enum: ['clear', 'pending', 'needs_review'],
+      default: 'clear',
+      index: true,
+    },
+    internalReviewReason: {
+      type: String,
+      default: '',
+    },
     failureStage: String,
     failureReason: String,
     quote: {
@@ -164,5 +179,9 @@ proWaveTransactionSchema.index({ createdAt: -1 });
 proWaveTransactionSchema.index({ status: 1, createdAt: -1 });
 proWaveTransactionSchema.index({ operationType: 1, createdAt: -1 });
 proWaveTransactionSchema.index({ prowaveInvoice: 1, itemCode: 1 });
+proWaveTransactionSchema.index(
+  { user: 1, operationType: 1, clientRequestId: 1 },
+  { unique: true, sparse: true }
+);
 
 module.exports = mongoose.model('ProWaveTransaction', proWaveTransactionSchema);

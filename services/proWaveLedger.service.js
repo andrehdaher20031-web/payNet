@@ -7,6 +7,8 @@ const DIRECT_TOPUP_PROVIDER_DEBIT_TOLERANCE_USD =
   Number(process.env.PROWAVE_DIRECT_TOPUP_DEBIT_TOLERANCE_USD) || 0.1;
 const DIRECT_TOPUP_PROVIDER_DEBIT_TOLERANCE_PERCENT =
   Number(process.env.PROWAVE_DIRECT_TOPUP_DEBIT_TOLERANCE_PERCENT) || 5;
+const PROWAVE_INVOICE_MISSING_GRACE_MS =
+  Number(process.env.PROWAVE_INVOICE_MISSING_GRACE_MS) || 30 * 60 * 1000;
 const DIRECT_TOPUP_OPERATION = 'direct_topup';
 
 const toNumber = (value, fallback = null) => {
@@ -175,6 +177,28 @@ const getProviderDebitStatus = ({ expected, actual, operationType }) => {
     : 'mismatch';
 };
 
+const getReviewStatus = (mismatchReason) =>
+  mismatchReason ? 'needs_review' : 'clear';
+
+const getInvoiceReferenceDate = (transaction = {}) =>
+  transaction.completedAt ||
+  transaction.updatedAt ||
+  transaction.createdAt ||
+  transaction.startedAt ||
+  new Date();
+
+const isWithinMissingInvoiceGrace = (transaction = {}) => {
+  const referenceDate = new Date(getInvoiceReferenceDate(transaction)).getTime();
+  if (!Number.isFinite(referenceDate)) return false;
+
+  return Date.now() - referenceDate < PROWAVE_INVOICE_MISSING_GRACE_MS;
+};
+
+const wasProviderCompletedLocally = (transaction = {}) =>
+  transaction.status === 'completed' ||
+  transaction.status === 'mismatch' ||
+  Boolean(transaction.completedAt);
+
 const getEffectiveExpectedProviderDebitUsd = (transaction = {}) => {
   const fallback = toRoundedNumber(transaction.expectedProviderDebitUsd);
 
@@ -280,8 +304,10 @@ const resolveCompletedStatus = ({
   });
 
   return {
-    status: mismatchReason ? 'mismatch' : 'completed',
+    status: 'completed',
     mismatchReason,
+    internalReviewStatus: getReviewStatus(mismatchReason),
+    internalReviewReason: mismatchReason,
   };
 };
 
@@ -303,6 +329,7 @@ const createPendingTransaction = async ({
   paynetBalanceBeforeSyp,
   pricing,
   quote,
+  clientRequestId,
 }) => {
   const quantity = Number(qty || 1);
   const saleUnitPriceUsd = toRoundedNumber(
@@ -358,6 +385,7 @@ const createPendingTransaction = async ({
     roundingStep: pricing.roundingStep || 1,
     ...financials,
     quote,
+    clientRequestId,
     startedAt: new Date(),
   });
 };
@@ -430,6 +458,8 @@ const markCompletedTransaction = async (
   transaction.invoiceMatchStatus = invoiceMatchStatus;
   transaction.status = resolved.status;
   transaction.mismatchReason = resolved.mismatchReason;
+  transaction.internalReviewStatus = resolved.internalReviewStatus;
+  transaction.internalReviewReason = resolved.internalReviewReason;
   transaction.rawProviderBalanceBefore = providerBalanceBeforeResponse;
   transaction.rawProviderBalanceAfter = providerBalanceAfterResponse;
   transaction.rawPurchaseResponse = purchaseResponse;
@@ -564,7 +594,21 @@ const getReconciliationReport = async (query = {}) => {
           actualCostSyp: { $sum: '$actualCostSyp' },
           profitSyp: { $sum: '$profitSyp' },
           mismatches: {
-            $sum: { $cond: [{ $eq: ['$status', 'mismatch'] }, 1, 0] },
+            $sum: {
+              $cond: [
+                {
+                  $or: [
+                    { $eq: ['$status', 'mismatch'] },
+                    { $eq: ['$internalReviewStatus', 'needs_review'] },
+                    { $eq: ['$invoiceMatchStatus', 'mismatch'] },
+                    { $eq: ['$invoiceMatchStatus', 'missing'] },
+                    { $eq: ['$providerBalanceStatus', 'mismatch'] },
+                  ],
+                },
+                1,
+                0,
+              ],
+            },
           },
           failed: {
             $sum: { $cond: [{ $in: ['$status', ['failed', 'refunded']] }, 1, 0] },
@@ -621,15 +665,31 @@ const reconcileTransactionsWithInvoices = async (providerInvoicesResponse) => {
     applyExpectedProviderDebitUsd(transaction, expectedProviderDebitUsd);
 
     if (!invoice) {
-      transaction.invoiceMatchStatus = 'missing';
-      transaction.status = 'mismatch';
-      transaction.mismatchReason = buildMismatchReason({
-        providerBalanceStatus: transaction.providerBalanceStatus,
-        invoiceMatchStatus: 'missing',
-        expectedProviderDebitUsd,
-        actualProviderDebitUsd: transaction.actualProviderDebitUsd,
-        hasInvoice: Boolean(transaction.prowaveInvoice),
-      });
+      const keepPreviousMatchedInvoice =
+        transaction.invoiceMatchStatus === 'matched' && transaction.rawInvoice;
+      const withinGrace = isWithinMissingInvoiceGrace(transaction);
+      const nextInvoiceStatus = keepPreviousMatchedInvoice
+        ? 'matched'
+        : withinGrace
+          ? 'pending'
+          : 'missing';
+      const nextMismatchReason =
+        nextInvoiceStatus === 'missing'
+          ? buildMismatchReason({
+              providerBalanceStatus: transaction.providerBalanceStatus,
+              invoiceMatchStatus: 'missing',
+              expectedProviderDebitUsd,
+              actualProviderDebitUsd: transaction.actualProviderDebitUsd,
+              hasInvoice: Boolean(transaction.prowaveInvoice),
+            })
+          : '';
+
+      transaction.invoiceMatchStatus = nextInvoiceStatus;
+      transaction.status = wasProviderCompletedLocally(transaction) ? 'completed' : 'pending';
+      transaction.mismatchReason = nextMismatchReason;
+      transaction.internalReviewStatus =
+        nextInvoiceStatus === 'pending' ? 'pending' : getReviewStatus(nextMismatchReason);
+      transaction.internalReviewReason = nextMismatchReason;
       missing += 1;
       await transaction.save();
       continue;
@@ -659,6 +719,8 @@ const reconcileTransactionsWithInvoices = async (providerInvoicesResponse) => {
     transaction.invoiceMatchStatus = invoiceMatchStatus;
     transaction.status = resolved.status;
     transaction.mismatchReason = resolved.mismatchReason;
+    transaction.internalReviewStatus = resolved.internalReviewStatus;
+    transaction.internalReviewReason = resolved.internalReviewReason;
     transaction.rawInvoice = invoice;
     Object.assign(transaction, financials);
     await transaction.save();
