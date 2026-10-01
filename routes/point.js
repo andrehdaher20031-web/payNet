@@ -1,4 +1,5 @@
 const express = require("express");
+const mongoose = require('mongoose');
 const router = express.Router();
 const User = require('../models/User');
 const Point = require("../models/Point")
@@ -99,7 +100,7 @@ router.put('/add-balance/:id', async (req, res) => {
 
   try {
     const value = Number(amount);
-    if (isNaN(value)) return res.status(400).json({ message: "المبلغ غير صحيح" });
+    if (!Number.isFinite(value) || value <= 0) return res.status(400).json({ message: "المبلغ غير صحيح" });
 
     // إيجاد نقطة البيع أولًا
     const findPoint = await Point.findById(id);
@@ -113,20 +114,9 @@ router.put('/add-balance/:id', async (req, res) => {
       return res.status(400).json({ message: "الرصيد غير كافٍ" });
     }
 
-    // تحديث رصيد نقطة البيع
-    findPoint.balance += value;
-    await findPoint.save();
-
     // تحديث رصيد الحساب المرتبط بنقطة البيع
     const point = await User.findOne({ email: findPoint.username });
     if (!point) return res.status(404).json({ message: "الحساب المرتبط بنقطة البيع غير موجود" });
-
-    point.balance += value;
-    await point.save();
-
-    // خصم من المستخدم
-    user.balance -= value;
-    await user.save();
 
         const balanceDaen = await Balance.findOne({}).sort({_id:-1});
         const amountDaen = balanceDaen.amountDaen || 0;
@@ -143,7 +133,21 @@ router.put('/add-balance/:id', async (req, res) => {
       amountDaen,
     });
 
-    await balanceDoc.save();
+    // The two user balances share the wallet used by provider purchases.
+    const session = await mongoose.startSession();
+    try {
+      await session.withTransaction(async () => {
+        const debited = await User.findOneAndUpdate({ _id: user._id, balance: { $gte: value } }, { $inc: { balance: -value } }, { new: true, session });
+        if (!debited) throw new Error('Insufficient balance');
+        const credited = await User.findByIdAndUpdate(point._id, { $inc: { balance: value } }, { new: true, session });
+        if (!credited) throw new Error('Recipient not found');
+        const updatedPoint = await Point.updateOne({ _id: findPoint._id }, { $inc: { balance: value } }, { session });
+        if (!updatedPoint.matchedCount) throw new Error('Point not found');
+        await Balance.create([balanceDoc.toObject()], { session });
+        user.balance = debited.balance;
+        point.balance = credited.balance;
+      });
+    } finally { await session.endSession(); }
     await invalidatePointCache();
 
     res.status(200).json({ message: "تم تعديل الرصيد بنجاح", point, user });

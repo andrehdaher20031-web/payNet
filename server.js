@@ -9,6 +9,7 @@ const point = require('./routes/point');
 const http = require('http'); // جديد
 const productOnline = require('./routes/productOnline')
 const proWaveRoutes = require('./routes/proWave');
+const alraghebRoutes = require('./routes/alraghebRoutes');
 const alesoRoutes = require('./routes/aleso');
 const {
   startDirectTopUpStatusScheduler,
@@ -75,7 +76,7 @@ app.use('/api/invoice', invoiceRoutes);
 app.use('/api/productonline', productOnline)
 app.use('/api/prowave', proWaveRoutes);
 app.use('/api/aleso', alesoRoutes);
-
+app.use('/api/alragheb', alraghebRoutes);
 // حفظ عملية التسديد في قاعدة البيانات
 
 app.use('/api/saveBalance', saveBalanceRoutes);
@@ -84,6 +85,7 @@ app.use('/api/saveBalance', saveBalanceRoutes);
 app.use('/api/backup', require('./routes/backup'));
 
 //ترحيل العمليات
+app.use('/api/admin/alragheb', require('./routes/alraghebAdminRoutes'));
 app.use('/api/admin', adminRoutes);
 app.use('/api/product', require('./routes/product'));
 
@@ -120,12 +122,15 @@ const startServer = async () => {
     await mongoose.connect(MONGO_URI, {
       serverSelectionTimeoutMS: 10000,
     });
+    await Promise.all(['AlraghebProductConfig', 'AlraghebPriceQuote', 'AlraghebTransaction', 'AlraghebConfigAudit', 'AlraghebPricingBatch', 'AlraghebPricingRule']
+      .map((name) => require(`./models/${name}`).init()));
 
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`Server running on port ${PORT}`);
       startReconciliationScheduler();
       startDirectTopUpStatusScheduler();
       startAlesoOrderStatusScheduler();
+      require('./services/alraghebReconciliation.service').start();
     });
   } catch (err) {
     console.error('Failed to start server');

@@ -137,8 +137,11 @@ router.post('/internet-full', authMiddleware, async (req, res) => {
     });
 
     // خصم الرصيد
-    user.balance -= amountToDeduct;
-    await user.save();
+    const debited = await User.findOneAndUpdate(
+      { _id: userId, ...(isAdmin ? {} : { balance: { $gte: amountToDeduct } }) },
+      { $inc: { balance: -amountToDeduct } }, { new: true }
+    );
+    if (!debited) return res.status(400).json({ message: 'الرصيد غير كافٍ' });
     // تسجيل العملية
     const payment = new Payment({
       user: userId,
@@ -162,7 +165,7 @@ router.post('/internet-full', authMiddleware, async (req, res) => {
 
     res.status(200).json({
       message: 'تمت العملية بنجاح',
-      newBalance: user.balance,
+      newBalance: debited.balance,
       payment,
     });
   } catch (err) {
@@ -335,8 +338,11 @@ router.post('/pay-selected', authMiddleware, async (req, res) => {
     }
 
     // خصم الرصيد
-    user.balance -= totalAmount;
-    await user.save();
+    const debited = await User.findOneAndUpdate(
+      { _id: userId, balance: { $gte: totalAmount } },
+      { $inc: { balance: -totalAmount } }, { new: true }
+    );
+    if (!debited) return res.status(400).json({ message: 'الرصيد غير كافٍ لإتمام العملية' });
 
     const created = await Payment.insertMany(docsToCreate, { ordered: false });
     await Promise.all(created.map((payment) => recordPaymentStats(payment, 1)));

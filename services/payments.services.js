@@ -27,8 +27,7 @@ const confirmPaymentService = async ({ id, amount }) => {
     };
   }
 
-  user.balance += Number(amount);
-  await user.save();
+  const credited = await User.findByIdAndUpdate(user._id, { $inc: { balance: Number(amount) } }, { new: true });
 
   const wasConfirmed = payment.isConfirmed;
   payment.isConfirmed = true;
@@ -47,7 +46,7 @@ const confirmPaymentService = async ({ id, amount }) => {
     message: 'تم تحديث رصيد المستخدم',
     data: {
       userId: user._id,
-      newBalance: user.balance,
+      newBalance: credited.balance,
       paymentId: payment._id,
     },
   };

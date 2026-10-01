@@ -138,13 +138,14 @@ const getPaymentOperationType = (payment = {}) => {
   const provider = payment.extra?.provider;
 
   if (provider === 'aleso') return 'منتج Aleso';
+  if (provider === 'alragheb') return 'تطبيقات الدردشة Alragheb';
   if (provider === 'prowave') return 'منتج رقمي';
 
   return 'تسديد خدمة';
 };
 
 const isProviderManagedDirectTopUpPayment = (payment = {}) =>
-  payment.extra?.provider === 'prowave' &&
+  payment.extra?.provider === 'alragheb' || payment.extra?.provider === 'prowave' &&
   (payment.extra?.operation_type === 'direct_topup' ||
     payment.extra?.prowave_operation_type === 'direct_topup');
 
@@ -354,6 +355,9 @@ router.put('/payment/:id', async (req, res) => {
     }
 
     const original = await InternetPayment.findById(id).lean();
+    if (original?.extra?.provider === 'alragheb') {
+      return res.status(400).json({ message: 'عملية Alragheb تدار من سجل المزوّد ولا يتغير نوع دفعها' });
+    }
     const updatedPayment = await InternetPayment.findByIdAndUpdate(
       id,
       { paymentType },
@@ -474,8 +478,7 @@ router.post('/reject/:id', async (req, res) => {
     const user = await User.findOne({ email });
     if (user) {
       const Amount = payment.calculatedAmount;
-      user.balance += Amount;
-      await user.save();
+      await User.updateOne({ _id: user._id }, { $inc: { balance: Amount } });
     }
     req.io.emit('json_message', true);
     if (payment && updatedPayment) {
@@ -752,7 +755,6 @@ router.put('/addbatch/:id', async (req, res) => {
         .json('لا يمكن اضافة دفعة جديدة لان المبلغ المستحق اكثر من المليون');
     }
     const newUser = await User.findById({ _id: id });
-    const balanceAmount = newUser.balance + batch;
     const newBalance = await new Balance({
       name: newUser.email,
       amount: batch,
@@ -771,7 +773,7 @@ router.put('/addbatch/:id', async (req, res) => {
     await recordBalanceStats(newBalance, 1);
     await User.findByIdAndUpdate(
       { _id: id },
-      { balance: balanceAmount },
+      { $inc: { balance: Number(batch) } },
       { new: true }
     );
     await invalidateReports();

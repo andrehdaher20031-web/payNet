@@ -15,13 +15,13 @@ const incCounter = (inc, path, amount = 0, count = 1) => {
   inc[`${path}.amount`] = (inc[`${path}.amount`] || 0) + amount;
 };
 
-const updateDailyStats = async (date, inc) => {
+const updateDailyStats = async (date, inc, session) => {
   if (!Object.keys(inc).length) return null;
 
   const updated = await DailyStats.findOneAndUpdate(
     { day: toDayKey(date) },
     { $inc: inc },
-    { upsert: true, new: true, setDefaultsOnInsert: true }
+    { upsert: true, new: true, setDefaultsOnInsert: true, session }
   ).lean();
 
   cache.delByPrefix('dailyStats:');
@@ -29,7 +29,7 @@ const updateDailyStats = async (date, inc) => {
   return updated;
 };
 
-const recordPaymentStats = async (payment, direction = 1) => {
+const recordPaymentStats = async (payment, direction = 1, session) => {
   if (!payment) return null;
 
   const amount = Number(payment.amount || payment.calculatedAmount || 0) * direction;
@@ -46,7 +46,7 @@ const recordPaymentStats = async (payment, direction = 1) => {
     count
   );
 
-  return updateDailyStats(payment.createdAt || new Date(), inc);
+  return updateDailyStats(payment.createdAt || new Date(), inc, session);
 };
 
 const recordBalanceStats = async (balance, direction = 1) => {
