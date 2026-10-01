@@ -5,6 +5,11 @@ exports.login = async (req, res) => {
   const { email, password } = req.body;
 
   try {
+    if (!process.env.JWT_SECRET) {
+      console.error("Login configuration error: JWT_SECRET is missing");
+      return res.status(503).json({ message: "إعدادات تسجيل الدخول غير مكتملة على الخادم" });
+    }
+
     // تحقق من وجود المستخدم
     const user = await User.findOne({ email });
     if (!user) {
@@ -28,6 +33,7 @@ exports.login = async (req, res) => {
       user: { id: user._id, email: user.email},
     });
   } catch (err) {
+    console.error("Login error:", err.message);
     res.status(500).json({ message: "حدث خطأ أثناء تسجيل الدخول" });
   }
 };
