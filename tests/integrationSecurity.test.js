@@ -215,22 +215,42 @@ test('financial boundaries, current permissions and socket privacy on an isolate
   });
 
   await t.test('socket authentication and identity-derived rooms prevent cross-customer subscriptions', async () => {
-    await assert.rejects(socketConnect(), /UNAUTHORIZED/);
+    await assert.rejects(socketConnect('invalid-socket-token'), /UNAUTHORIZED/);
+    const guest = await socketConnect();
     const client = await socketConnect(token(owner));
+    const manager = await socketConnect(token(admin));
+    const frames = new Map([guest, client, manager].map(socket => [socket, []]));
+    for (const socket of [guest, client, manager]) socket.ws.addEventListener('message', event => {
+      if (String(event.data).startsWith('42')) frames.get(socket).push(String(event.data));
+    });
     try {
+      const guestRooms = io.sockets.sockets.get(guest.id).rooms;
+      assert.deepEqual([...guestRooms], [guest.id]);
+      const guestAck = new Promise(resolve => guest.ws.addEventListener('message', event => { if (String(event.data).startsWith('431')) resolve(JSON.parse(String(event.data).slice(3))[0]); }));
+      guest.ws.send('421' + JSON.stringify(['joinRoom', 'admins']));
+      assert.deepEqual(await guestAck, { success: false });
       const ack = new Promise(resolve => client.ws.addEventListener('message', event => { if (String(event.data).startsWith('431')) resolve(JSON.parse(String(event.data).slice(3))[0]); }));
       client.ws.send('421' + JSON.stringify(['joinRoom', other.email]));
       assert.deepEqual(await ack, { success: false });
       const connected = io.sockets.sockets.get(client.id);
       assert.ok(connected.rooms.has(owner.email)); assert.equal(connected.rooms.has(other.email), false); assert.equal(connected.rooms.has('admins'), false);
-    } finally { client.ws.close(); }
-    const manager = await socketConnect(token(admin));
-    try {
       assert.ok(io.sockets.sockets.get(manager.id).rooms.has('admins'));
+      const payments = [{ _id: 'private-payment', email: 'private-customer@socket.invalid', landline: 'PRIVATE-NUMBER', amount: 123 }];
+      require('../services/pendingPaymentsEvents.service').publishPendingPayments(io, payments);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      for (const socket of [guest, client]) {
+        assert.deepEqual(frames.get(socket), ['42["pendingPaymentsChanged"]']);
+        assert.doesNotMatch(frames.get(socket).join(''), /private-payment|private-customer|PRIVATE-NUMBER|123/);
+      }
+      assert.ok(frames.get(manager).some(frame => frame.includes('pendingPaymentsUpdate') && frame.includes('private-payment')));
       await User.updateOne({ _id: admin._id }, { $set: { role: 'user' } });
-      const ack = new Promise(resolve => manager.ws.addEventListener('message', event => { if (String(event.data).startsWith('431')) resolve(true); }));
-      manager.ws.send('421' + JSON.stringify(['joinRoom', admin.email])); await ack;
+      const managerAck = new Promise(resolve => manager.ws.addEventListener('message', event => { if (String(event.data).startsWith('431')) resolve(true); }));
+      manager.ws.send('421' + JSON.stringify(['joinRoom', admin.email])); await managerAck;
       assert.equal(io.sockets.sockets.get(manager.id).rooms.has('admins'), false);
-    } finally { manager.ws.close(); }
+      frames.set(manager, []);
+      require('../services/pendingPaymentsEvents.service').publishPendingPayments(io, payments);
+      await new Promise(resolve => setTimeout(resolve, 100));
+      assert.deepEqual(frames.get(manager), ['42["pendingPaymentsChanged"]']);
+    } finally { guest.ws.close(); client.ws.close(); manager.ws.close(); }
   });
 });

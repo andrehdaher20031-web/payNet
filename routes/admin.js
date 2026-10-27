@@ -10,6 +10,7 @@ const { confirmPaymentService, refundManualPayment, transitionManualPayment, isP
 const { Decimal, sypAmount, walletAdjustment, MAX_WALLET } = require('../utils/money');
 const WalletAdjustment = require('../models/WalletAdjustment');
 const { customerPayment } = require('../utils/customerPayment');
+const { publishPendingPayments } = require('../services/pendingPaymentsEvents.service');
 const exchangeRateController = require('../controllers/exchangeRateController');
 const proWaveController = require('../controllers/proWave');
 const { cache, cacheKey, getOrSet } = require('../services/cache.service');
@@ -155,10 +156,7 @@ const emitPendingPayments = async (req) => {
     .select(PAYMENT_FIELDS)
     .sort({ createdAt: -1 })
     .lean();
-  io.emit(
-    'pendingPaymentsUpdate',
-    sanitizePaymentsStatusForResponse(pendingPayments)
-  );
+  publishPendingPayments(io, sanitizePaymentsStatusForResponse(pendingPayments));
 };
 
 router.get('/pending', authMiddleware, async (req, res) => {

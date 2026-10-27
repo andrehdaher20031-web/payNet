@@ -798,7 +798,7 @@ const emitPendingPayments = async (req) => {
     .limit(500)
     .lean();
 
-  io.to('admins').emit('pendingPaymentsUpdate', pendingPayments);
+  require('../services/pendingPaymentsEvents.service').publishPendingPayments(io, pendingPayments);
 };
 
 const sanitizePaymentForCustomer = (payment) => {

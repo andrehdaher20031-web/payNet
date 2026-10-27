@@ -7,6 +7,7 @@ const saveNumber = require('../models/saveNumber'); // تأكد أنك استو�
 const authMiddleware = require('../middleware/authMiddleware');
 const { cache } = require('../services/cache.service');
 const { recordPaymentStats } = require('../services/dailyStats.service');
+const { publishPendingPayments } = require('../services/pendingPaymentsEvents.service');
 
 const PAYMENT_FIELDS =
   'landline company speed email amount calculatedAmount paymentType status note extra createdAt updatedAt user';
@@ -84,7 +85,7 @@ const emitPendingPayments = async (req) => {
     .sort({ createdAt: -1 })
     .limit(500)
     .lean();
-  io.to('admins').emit('pendingPaymentsUpdate', pendingPayments);
+  publishPendingPayments(io, pendingPayments);
 };
 
 router.post('/internet-full', authMiddleware, async (req, res) => {
