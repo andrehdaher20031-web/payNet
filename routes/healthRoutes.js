@@ -13,7 +13,8 @@ function createHealthRouter({ databaseState = () => mongoose.connection.readySta
     res.set('Cache-Control', 'no-store').status(databaseReady ? 200 : 503).json({
       status: databaseReady ? 'ok' : 'unavailable', revision,
       checks: { database: databaseReady ? 'connected' : 'unavailable',
-        chatCatalog: { configuration: !catalogEnabled ? 'disabled' : configured ? 'configured' : 'not_configured', ...catalogStatus() } },
+        chatCatalog: { configuration: !catalogEnabled ? 'disabled' : configured ? 'configured' : 'not_configured', ...catalogStatus() },
+        chatPurchasing: { environmentEnabled: environment.ALRAGHEB_PURCHASE_ENABLED === 'true', roundingReady: environment.ALRAGHEB_ROUNDING_POLICY === 'syp_2dp' } },
     });
   });
   return router;

@@ -20,7 +20,12 @@ test('public deployment health identifies configuration without credentials or p
   assert.equal(body.revision, environment.RENDER_GIT_COMMIT);
   assert.equal(body.checks.chatCatalog.configuration, 'configured');
   assert.equal(body.checks.chatCatalog.errorCode, 'ALRAGHEB_TIMEOUT');
+  assert.deepEqual(body.checks.chatPurchasing, { environmentEnabled: false, roundingReady: false });
   assert.ok(!JSON.stringify(body).includes('isolated-'));
+  environment.ALRAGHEB_PURCHASE_ENABLED = 'true';
+  environment.ALRAGHEB_ROUNDING_POLICY = 'syp_2dp';
+  body = await (await read()).json();
+  assert.deepEqual(body.checks.chatPurchasing, { environmentEnabled: true, roundingReady: true });
   environment.ALRAGHEB_API_TOKEN = '';
   body = await (await read()).json();
   assert.equal(body.checks.chatCatalog.configuration, 'not_configured');
