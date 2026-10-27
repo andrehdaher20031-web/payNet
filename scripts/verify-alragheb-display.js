@@ -54,7 +54,10 @@ async function main() {
   app.use(require('cors')());
   app.use(express.json());
   app.use((req, _res, next) => { if (req.path.startsWith('/api/alragheb/content/')) contentRequests += 1; next(); });
-  app.get('/api/alragheb/orders', (_req, res) => res.json({ success: true, source: 'alragheb', data: [], meta: { total: 0, page: 1, total_pages: 1 } }));
+  app.get('/api/alragheb/orders', (_req, res) => res.json({ success: true, source: 'alragheb', data: [{
+    transaction_id: 'isolated-display-order', product_name: 'Alragheb Package', qty: 1, params: { playerId: '001122' },
+    status: 'completed', total_amount_syp: '10.25', result: 'TEST-DELIVERY-CODE', created_at: new Date().toISOString(),
+  }], meta: { total: 1, page: 1, total_pages: 1 } }));
   app.use('/api/alragheb', require('../routes/alraghebRoutes'));
   app.use('/api/admin/alragheb', require('../routes/alraghebAdminRoutes'));
   const server = http.createServer(app);
@@ -84,6 +87,13 @@ async function main() {
       }
       if (url.pathname === '/api/user/balance') return route.fulfill({ json: { balance: 100 } });
       if (url.pathname === '/api/user/daen') return route.fulfill({ json: { daen: 0 } });
+      if (['/api/admin/user/confirmed', '/api/point/user/confirmed/point'].includes(url.pathname)) return route.fulfill({ json: {
+        data: [{ _id: 'isolated-legacy-receipt', source: 'internet', company: 'Alragheb', operationType: 'تطبيقات الدردشة Alragheb',
+          speed: 'https://alragheb-store.com/category/21', amount: 10.25, status: 'غير مسددة', note: 'Alragheb rejected the request',
+          email: 'display-test@example.invalid', landline: '001122', pointUsername: 'test-point', pointOwner: 'Test owner',
+          extra: { provider: 'alragheb' }, createdAt: new Date().toISOString() }],
+        pagination: { total: 1, page: 1, limit: 10, totalPages: 1 },
+      } });
       if (url.pathname.includes('profile')) return route.fulfill({ json: { _id: '507f1f77bcf86cd799439011', role: 'admin', name: 'Display test', balance: 100, card: { cardapplication: true } } });
       return route.fulfill({ json: { success: true, data: [], meta: { total: 0, page: 1, total_pages: 1 } } });
     }
@@ -101,6 +111,13 @@ async function main() {
   const browserErrors = [];
   page.on('pageerror', (error) => browserErrors.push(error.message));
   const cards = () => page.getByRole('link', { name: /^تفاصيل / });
+  const customerBranding = async () => {
+    assert.doesNotMatch(await page.locator('body').innerText(), /alragheb|alrageb|الراغب/i);
+    const labels = await page.locator('[aria-label], [title], img[alt]').evaluateAll((elements) => elements
+      .filter((element) => element.getClientRects().length)
+      .map((element) => [element.getAttribute('aria-label'), element.getAttribute('title'), element.getAttribute('alt')].filter(Boolean).join(' ')).join(' '));
+    assert.doesNotMatch(labels, /alragheb|alrageb|الراغب/i);
+  };
   const layout = async () => {
     const value = await page.evaluate(() => ({ viewport: innerWidth, width: document.documentElement.scrollWidth }));
     assert.ok(value.width <= value.viewport + 1, JSON.stringify(value));
@@ -110,31 +127,43 @@ async function main() {
     await cards().first().waitFor();
     assert.equal(await cards().count(), 24);
     await layout();
+    await customerBranding();
     await page.screenshot({ path: path.join(output, 'catalog-desktop.png'), fullPage: true });
     report.checks.push('desktop catalog, categories and pagination');
     await page.goto(origin + '/chat-apps?category=21');
     await cards().first().waitFor();
     assert.equal(await cards().count(), 24);
-    await page.getByRole('button', { name: 'الصفحة التالية', exact: true }).click();
+    await page.getByRole('navigation', { name: 'صفحات المنتجات' }).first().getByRole('button', { name: 'الصفحة التالية', exact: true }).click();
     await page.waitForURL('**page=2');
     await page.getByRole('navigation', { name: 'صفحات المنتجات' }).getByText(/^2 \/ /).waitFor();
+    await customerBranding();
     report.checks.push('ZNET second page');
     await page.goto(origin + '/chat-apps?search=AHLAN');
     await page.getByRole('link', { name: /تفاصيل AHLAN/ }).first().waitFor();
     await page.getByRole('link', { name: /تفاصيل AHLAN/ }).first().click();
     await page.locator('article').waitFor();
+    await customerBranding();
     report.checks.push('search and product details');
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(origin + '/chat-apps');
     await cards().first().waitFor();
     await layout();
+    await customerBranding();
     await page.screenshot({ path: path.join(output, 'catalog-mobile.png'), fullPage: true });
     report.checks.push('mobile layout without horizontal overflow');
     await page.goto(origin + '/adminAlraghebPrices');
     await page.locator('tbody tr').first().waitFor();
+    await page.getByRole('heading', { name: 'كتالوج Alragheb', exact: true }).waitFor();
     await layout();
     await page.screenshot({ path: path.join(output, 'admin-mobile.png'), fullPage: true });
     report.checks.push('admin catalog');
+    for (const route of ['/financial', '/financial-point']) {
+      await page.goto(origin + route);
+      await page.getByRole('cell', { name: 'تطبيقات الدردشة', exact: true }).waitFor();
+      await customerBranding();
+      await layout();
+    }
+    report.checks.push('customer catalog, details, orders and both financial statements omit supplier branding; admin labels remain');
 
     let release;
     gate = new Promise((resolve) => { release = resolve; });
@@ -145,6 +174,7 @@ async function main() {
     await page.getByText(/جاري تحديث التطبيقات، آخر بيانات متاحة/).waitFor();
     report.cachedDisplayMs = Date.now() - started;
     assert.equal(await cards().count(), 24);
+    await customerBranding();
     await page.screenshot({ path: path.join(output, 'background-refresh-mobile.png'), fullPage: true });
     gate = null; release();
     await page.getByText(/جاري تحديث التطبيقات، آخر بيانات متاحة/).waitFor({ state: 'hidden' });
@@ -155,6 +185,7 @@ async function main() {
     await cards().first().waitFor();
     await page.getByText(/تعذر التحديث، آخر بيانات متاحة/).waitFor();
     assert.equal(await cards().count(), 24);
+    await customerBranding();
     report.checks.push('provider timeout retains every cached product');
     await page.screenshot({ path: path.join(output, 'provider-timeout-mobile.png'), fullPage: true });
 

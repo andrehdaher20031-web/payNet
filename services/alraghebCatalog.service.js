@@ -1,4 +1,5 @@
 const provider = require('./alraghebApi');
+const { customerText } = require('../utils/customerPresentation');
 const { cache } = require('./cache.service');
 
 const ROOT_ID = 1;
@@ -71,6 +72,7 @@ const serializeProduct = (product, admin = false) => {
   const { provider_price, provider_base_price, ...customerProduct } = product;
   return {
     ...customerProduct,
+    ...(!admin ? { name: customerText(customerProduct.name), category_name: customerText(customerProduct.category_name), params: customerProduct.params.map(customerText) } : {}),
     provider: 'alragheb',
     purchasable: false,
     purchase_status: 'not_configured',
@@ -181,10 +183,10 @@ const selectContent = (catalog, categoryId, query = {}) => {
   }
   return {
     data: {
-      category: categorySummary(catalog, category),
-      breadcrumbs,
+      category: { ...categorySummary(catalog, category), name: customerText(category.name) },
+      breadcrumbs: breadcrumbs.map((item) => ({ ...item, name: customerText(item.name) })),
       categories: catalog.categories.filter((item) => item.parent_id === categoryId)
-        .map((item) => categorySummary(catalog, item)),
+        .map((item) => ({ ...categorySummary(catalog, item), name: customerText(item.name) })),
       products: result.data,
     },
     meta: result.meta,

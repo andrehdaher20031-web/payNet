@@ -137,7 +137,7 @@ const getPaymentOperationType = (payment = {}) => {
   const provider = payment.extra?.provider;
 
   if (provider === 'aleso') return 'منتج Aleso';
-  if (provider === 'alragheb') return 'تطبيقات الدردشة Alragheb';
+  if (provider === 'alragheb') return 'تطبيقات الدردشة';
   if (provider === 'prowave') return 'منتج رقمي';
 
   return 'تسديد خدمة';

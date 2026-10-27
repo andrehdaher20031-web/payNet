@@ -1,4 +1,5 @@
 const mongoose = require('mongoose');
+const { customerText } = require('../utils/customerPresentation');
 const { randomUUID } = require('crypto');
 const provider = require('./alraghebApi');
 const catalog = require('./alraghebCatalog.service');
@@ -21,7 +22,7 @@ const objectId = (id) => typeof id === 'string' && /^[a-f0-9]{24}$/i.test(id);
 const uuid = (id) => typeof id === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(id);
 const publicOrder = (t, admin = false) => ({
   transaction_id: String(t._id), payment_id: String(t.payment), product_id: t.productId,
-  product_name: t.productName, qty: t.qty, params: t.params, status: t.status,
+  product_name: admin ? t.productName : customerText(t.productName), qty: t.qty, params: t.params, status: t.status,
   provider_status: t.providerStatus, total_amount_syp: t.totalSyp, currency: 'SYP',
   refunded_amount_syp: t.refundedAt ? t.totalSyp : '0', result: t.result ?? null,
   created_at: t.createdAt, updated_at: t.updatedAt,

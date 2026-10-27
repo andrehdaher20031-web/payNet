@@ -14,6 +14,7 @@ const {
   paginatedResponse,
 } = require("../utils/pagination");
 const { normalizePaymentStatusLabel } = require("../utils/paymentStatus");
+const { customerPayment } = require('../utils/customerPayment');
 router.use(authMiddleware);
 
 const BALANCE_FIELDS = 'destination name number operator amount noticeNumber amountDaen date isConfirmed status createdAt user';
@@ -273,7 +274,7 @@ router.get("/user/confirmed/point", authMiddleware, async (req, res) => {
       const point = pointByUsername.get(payment.email);
 
       return {
-        ...payment,
+        ...customerPayment(payment),
         status: normalizePaymentStatusLabel(payment.status),
         pointUsername: payment.email,
         pointOwner: point?.owner || '',

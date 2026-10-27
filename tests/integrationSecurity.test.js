@@ -114,11 +114,17 @@ test('financial boundaries, current permissions and socket privacy on an isolate
   });
 
   await t.test('customer history excludes other owners and raw supplier data but retains purchased codes', async () => {
+    const chat = await Payment.create({ user: owner._id, company: 'Alragheb', speed: 'Alragheb Package', calculatedAmount: 1, status: 'تم التسديد', extra: { provider: 'alragheb', product_name: 'Package' } });
     await Payment.create({ user: owner._id, calculatedAmount: 1, status: 'تم التسديد', extra: { provider: 'prowave', digital_codes: ['OWNED-CODE'], prowave_response: { secret: 'SUPPLIER-PRIVATE' }, provider_unit_cost_usd: 0.1 } });
     await Payment.create({ user: other._id, calculatedAmount: 1, status: 'تم التسديد', extra: { digital_codes: ['OTHER-CODE'] } });
     const response = await request('/api/admin/user/confirmed', owner);
     assert.equal(response.status, 200); const body = await response.text();
     assert.match(body, /OWNED-CODE/); assert.doesNotMatch(body, /OTHER-CODE|SUPPLIER-PRIVATE|provider_unit_cost_usd/);
+    const visible = JSON.parse(body).data.find((row) => String(row._id) === String(chat._id));
+    assert.equal(visible.company, 'تطبيقات الدردشة');
+    assert.equal(visible.operationType, 'تطبيقات الدردشة');
+    assert.doesNotMatch(visible.speed, /alragheb/i);
+    assert.equal((await Payment.findById(chat._id)).company, 'Alragheb');
   });
 
   await t.test('new passwords stay plain; old hashes migrate on login without revealing credentials', async () => {
