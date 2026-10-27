@@ -124,6 +124,7 @@ const alesoTransactionSchema = new mongoose.Schema(
 );
 
 alesoTransactionSchema.index({ createdAt: -1 });
+alesoTransactionSchema.index({ updatedAt: 1 });
 alesoTransactionSchema.index({ status: 1, createdAt: -1 });
 alesoTransactionSchema.index({ providerStatus: 1, createdAt: -1 });
 alesoTransactionSchema.index({ user: 1, createdAt: -1 });

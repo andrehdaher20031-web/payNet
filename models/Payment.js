@@ -39,7 +39,8 @@ const paymentSchema = new mongoose.Schema({
     ref: "User",
     required: true,
   }
-});
+}, { timestamps: { createdAt: false, updatedAt: true } });
+paymentSchema.index({ updatedAt: 1 });
 
 paymentSchema.index({ status: 1, createdAt: -1 });
 paymentSchema.index({ user: 1, createdAt: -1 });

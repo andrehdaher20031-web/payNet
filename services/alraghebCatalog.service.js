@@ -2,7 +2,7 @@ const provider = require('./alraghebApi');
 const { cache } = require('./cache.service');
 
 const ROOT_ID = 1;
-const CACHE_KEY = 'alragheb:chat-catalog:v3';
+const CACHE_KEY = 'alragheb:chat-catalog:v4';
 const CACHE_SECONDS = 120;
 const STALE_SECONDS = 60 * 60;
 const { alraghebError } = provider;
@@ -157,6 +157,7 @@ const selectProducts = (catalog, query, { admin = false, categoryId = null, recu
       total_pages: totalPages,
       synced_at: catalog.synced_at,
       stale: Boolean(catalog.stale),
+      refreshing: Boolean(catalog.refreshing),
       purchase_enabled: false,
     },
   };
@@ -190,19 +191,38 @@ const selectContent = (catalog, categoryId, query = {}) => {
   };
 };
 
-const createCatalogService = ({ client = provider, storage = cache, now = Date.now } = {}) => {
+const createCatalogService = ({ client = provider, storage = cache, now = Date.now, snapshots = null } = {}) => {
   let inFlight = null;
   let nextRetryAt = 0;
+  let lastFailure = null;
+  const storageKey = () => snapshots?.namespace ? `${CACHE_KEY}:${snapshots.namespace()}` : CACHE_KEY;
+  const usable = (value) => value && Array.isArray(value.products) && Array.isArray(value.categories) &&
+    value.categories.some((category) => category.id === ROOT_ID) &&
+    Number.isFinite(Date.parse(value.synced_at)) && Date.parse(value.synced_at) <= now() &&
+    now() - Date.parse(value.synced_at) < STALE_SECONDS * 1000;
+  const snapshotError = (error) => console.warn('Alragheb catalog snapshot unavailable:', error.code || error.name || 'STORAGE_ERROR');
 
   const fetchCatalog = async () => {
     const categories = new Map([[ROOT_ID, { id: ROOT_ID, name: 'تطبيقات الدردشة', parent_id: 0, image_url: '' }]]);
     const products = new Map();
     let pending = [ROOT_ID];
+    const useIndex = typeof client.getContentIndex === 'function' && typeof client.getProducts === 'function';
+    let fullProducts;
+    if (useIndex) {
+      const list = await client.getProducts();
+      if (!Array.isArray(list) || list.length > 50000) throw malformed();
+      fullProducts = new Map();
+      for (const raw of list) {
+        const id = integer(raw?.id);
+        if (!id || fullProducts.has(id)) throw malformed();
+        fullProducts.set(id, raw);
+      }
+    }
 
     // Traverse the provider's tree, including future nested categories, with bounded concurrency.
     while (pending.length) {
       const batch = pending.splice(0, 3);
-      const responses = await Promise.allSettled(batch.map((id) => client.getContent(id)));
+      const responses = await Promise.allSettled(batch.map((id) => useIndex ? client.getContentIndex(id) : client.getContent(id)));
       for (let index = 0; index < batch.length; index += 1) {
         const response = responses[index];
         if (response.status === 'rejected') throw response.reason;
@@ -210,7 +230,9 @@ const createCatalogService = ({ client = provider, storage = cache, now = Date.n
         const parentId = batch[index];
         if (!Array.isArray(content?.products) || !Array.isArray(content?.categories)) throw malformed();
         for (const raw of content.products) {
-          const product = normalizeProduct(raw, parentId);
+          // Both sources must agree on ID and parent. A changing/incomplete response is
+          // retried later, never published as a truncated or incorrectly scoped catalog.
+          const product = normalizeProduct(useIndex ? fullProducts.get(integer(raw?.id)) : raw, parentId);
           if (products.has(product.id) && products.get(product.id).category_id !== parentId) throw malformed();
           products.set(product.id, product);
         }
@@ -228,26 +250,62 @@ const createCatalogService = ({ client = provider, storage = cache, now = Date.n
       }
     }
 
+    if (useIndex) {
+      for (const raw of fullProducts.values()) {
+        if (categories.has(integer(raw.parent_id)) && !products.has(integer(raw.id))) throw malformed();
+      }
+    }
+
     const catalog = {
       categories: [...categories.values()],
       products: [...products.values()].sort((a, b) => a.name.localeCompare(b.name, 'ar', { numeric: true }) || a.id - b.id),
       synced_at: new Date(now()).toISOString(),
     };
-    await storage.set(CACHE_KEY, catalog, STALE_SECONDS);
+    await storage.set(storageKey(), catalog, STALE_SECONDS);
+    if (snapshots) {
+      try { await snapshots.save(catalog); }
+      catch (error) { snapshotError(error); }
+    }
     nextRetryAt = 0;
+    lastFailure = null;
     return catalog;
   };
 
-  const getCatalog = async ({ force = false } = {}) => {
-    const stored = await storage.get(CACHE_KEY);
+  const getCatalog = async ({ force = false, background = false } = {}) => {
+    let stored = await storage.get(storageKey());
+    if (!usable(stored)) {
+      stored = null;
+      if (snapshots) {
+        try {
+          const saved = await snapshots.load();
+          if (usable(saved)) {
+            stored = saved;
+            const remainingSeconds = Math.max(1, Math.ceil(STALE_SECONDS - (now() - Date.parse(saved.synced_at)) / 1000));
+            await storage.set(storageKey(), saved, remainingSeconds);
+          }
+        } catch (error) { snapshotError(error); }
+      }
+    }
     const fresh = stored && now() - Date.parse(stored.synced_at) < CACHE_SECONDS * 1000;
     if (fresh && !force) return stored;
-    if (stored && nextRetryAt > now() && !force) return { ...stored, stale: true };
-    if (!inFlight) inFlight = fetchCatalog().finally(() => { inFlight = null; });
+    if (nextRetryAt > now() && !force) {
+      if (stored) return { ...stored, stale: true, refreshing: false };
+      if (lastFailure) throw lastFailure;
+    }
+    if (!inFlight) inFlight = fetchCatalog().catch((error) => {
+      nextRetryAt = now() + 30000;
+      lastFailure = error;
+      throw error;
+    }).finally(() => { inFlight = null; });
+    if (stored && background && !force) {
+      // Browsing can immediately use a complete snapshot. Price confirmation still waits
+      // for a fresh catalog and performs its separate live product-price check.
+      inFlight.catch(() => {});
+      return { ...stored, stale: true, refreshing: true };
+    }
     try {
       return await inFlight;
     } catch (error) {
-      nextRetryAt = now() + 30000;
       if (stored && !force) return { ...stored, stale: true };
       throw error;
     }
@@ -257,6 +315,6 @@ const createCatalogService = ({ client = provider, storage = cache, now = Date.n
 };
 
 module.exports = {
-  ...createCatalogService(), ROOT_ID, createCatalogService, categorySummary,
+  ...createCatalogService({ snapshots: require('./alraghebCatalogSnapshot.service') }), ROOT_ID, createCatalogService, categorySummary,
   integer, normalizeProduct, normalizeQuantity, parseQuery, selectContent, selectProducts, serializeProduct,
 };

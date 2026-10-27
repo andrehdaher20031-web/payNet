@@ -7,12 +7,15 @@ const Config = require('../models/AlraghebProductConfig');
 const Audit = require('../models/AlraghebConfigAudit');
 const PricingBatch = require('../models/AlraghebPricingBatch');
 const PricingRule = require('../models/AlraghebPricingRule');
+const PricingRuleAudit = require('../models/AlraghebPricingRuleAudit');
 const Quote = require('../models/AlraghebPriceQuote');
 const Transaction = require('../models/AlraghebTransaction');
 const Payment = require('../models/Payment');
 const User = require('../models/User');
 const { recordPaymentStats } = require('./dailyStats.service');
 const { cache } = require('./cache.service');
+const operations = require('./providerOperations.service');
+const RECOVERABLE = ['pending', 'unknown', 'manual_review'];
 const { fail } = pricing;
 const objectId = (id) => typeof id === 'string' && /^[a-f0-9]{24}$/i.test(id);
 const uuid = (id) => typeof id === 'string' && /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(id);
@@ -27,7 +30,9 @@ const publicOrder = (t, admin = false) => ({
     markup_percent: t.markupPercent ?? null, markup_fixed_syp: t.markupFixedSyp ?? null,
     gross_profit_syp: t.status === 'refunded' ? '0' : t.status === 'completed' && t.providerCostSyp != null ? new pricing.Decimal(t.totalSyp).minus(t.providerCostSyp).toFixed() : null,
     estimated_profit_syp: t.estimatedProfitSyp ?? null,
-    attempts: t.attempts, last_error: t.lastError, next_check_at: t.nextCheckAt } : {}),
+    attempts: t.attempts, last_error: t.lastError, next_check_at: t.nextCheckAt,
+    error_history: t.errorHistory || [], first_error: t.firstError || null, review_reason: t.reviewReason || '', phase: t.phase,
+    revision: t.__v || 0, resolution: t.resolution || null } : {}),
 });
 const quoteView = (q) => ({ quote_id: String(q._id), product_id: q.productId, qty: q.qty,
   price_per_billing_unit_syp: q.saleUnitPrice ?? q.price, fixed_fee_syp: q.markupFixedSyp ?? '0', billing_unit_qty: q.billingUnitQty,
@@ -104,6 +109,7 @@ function createOrderService({ client = provider, readCatalog = (options) => cata
   }
   async function createQuote(userId, body) {
     purchaseGate();
+    await operations.assertPurchasingAllowed('alragheb');
     await permission(userId);
     const recent = await Quote.countDocuments({ user: userId, createdAt: { $gte: new Date(Date.now() - 60000) } });
     if (recent >= 20) fail('RATE_LIMITED', 'يرجى الانتظار قبل طلب سعر جديد', 429);
@@ -206,11 +212,20 @@ function createOrderService({ client = provider, readCatalog = (options) => cata
     if (!category) fail('CATEGORY_NOT_FOUND', 'التصنيف غير موجود ضمن تطبيقات الدردشة', 404);
     if (typeof body.note !== 'string' || body.note.trim().length < 3 || body.note.length > 500) fail('INVALID_RULE', 'سبب تعديل قاعدة الربح مطلوب');
     const markup = pricing.validateMarkup(body);
-    const existing = await PricingRule.findOne({ categoryId: id }).lean();
-    const values = { categoryId: id, categoryName: category.name, ...markup, note: body.note.trim(), updatedBy: actor };
-    const rule = existing
-      ? await PricingRule.findOneAndUpdate({ _id: existing._id, revision: existing.revision }, { $set: values, $inc: { revision: 1 } }, { new: true })
-      : await PricingRule.create(values);
+    if (!Number.isSafeInteger(body.revision) || body.revision < 0) fail('INVALID_RULE', 'إصدار قاعدة الربح مطلوب');
+    const rule = await atomic(async (session) => {
+      const existing = await PricingRule.findOne({ categoryId: id }).session(session).lean();
+      if ((existing?.revision || 0) !== body.revision) fail('RULE_CHANGED', 'تغيرت قاعدة الربح، أعد تحميلها', 409);
+      const values = { categoryId: id, categoryName: category.name, ...markup, note: body.note.trim(), updatedBy: actor };
+      const saved = existing
+        ? await PricingRule.findOneAndUpdate({ _id: existing._id, revision: existing.revision }, { $set: values, $inc: { revision: 1 } }, { new: true, session })
+        : (await PricingRule.create([values], { session }))[0];
+      if (!saved) fail('RULE_CHANGED', 'تغيرت قاعدة الربح، أعد تحميلها', 409);
+      await PricingRuleAudit.create([{ categoryId: id, actor, note: body.note.trim(), before: existing, after: saved.toObject() }], { session });
+      await operations.recordAudit({ provider: 'alragheb', actor, action: 'category_pricing_updated', target: `category:${id}`,
+        note: body.note.trim(), before: publicRule(existing), after: publicRule(saved) }, session);
+      return saved;
+    });
     await onChange();
     return { rule: publicRule(rule), product_count: catalog.categorySummary(snapshot, category).product_count };
   }
@@ -250,10 +265,13 @@ function createOrderService({ client = provider, readCatalog = (options) => cata
   async function decorateProducts(products, admin = false, stale = false, categories = []) {
     const configs = mongoose.connection.readyState === 1 ? await Config.find({ productId: { $in: products.map((p) => p.id) } }).lean() : [];
     const rules = admin && mongoose.connection.readyState === 1 ? await PricingRule.find({}).lean() : [];
+    const durableEnabled = mongoose.connection.readyState === 1 ? (await operations.getSettings('alragheb')).purchaseEnabled : true;
     const snapshot = admin ? { categories: categories.length ? categories : products.map((p) => ({ id: p.category_id, parent_id: catalog.ROOT_ID })).concat([{ id: catalog.ROOT_ID, parent_id: 0 }]) } : null;
     return products.map((p) => {
       const config = configs.find((c) => c.productId === p.id);
-      return { ...catalog.serializeProduct(p, admin), ...pricing.decorate(p, config, stale),
+      const decorated = pricing.decorate(p, config, stale);
+      return { ...catalog.serializeProduct(p, admin), ...decorated,
+        ...(!durableEnabled && decorated.purchase_status === 'ready' ? { purchasable: false, purchase_status: 'purchase_disabled' } : {}),
         ...(admin ? { config: config || null, category_pricing_rule: publicRule(pricingRuleFor(snapshot, rules, p.category_id)) } : {}) };
     });
   }
@@ -266,6 +284,7 @@ function createOrderService({ client = provider, readCatalog = (options) => cata
       return publicOrder(previous);
     }
     purchaseGate();
+    await operations.assertPurchasingAllowed('alragheb');
     await permission(userId);
     const q = await Quote.findOne({ _id: body.quote_id, user: userId }).lean();
     if (!q || q.expiresAt <= new Date() || q.usedAt) {
@@ -311,19 +330,25 @@ function createOrderService({ client = provider, readCatalog = (options) => cata
     await processOrder(String(transaction._id));
     return publicOrder(await Transaction.findById(transaction._id).lean());
   }
-  async function settle(t, data) {
-    if (!data || !['accept', 'wait', 'reject'].includes(data.status) || typeof data.order_id !== 'string' || (t.providerOrderId && t.providerOrderId !== data.order_id)) fail('INVALID_ORDER_RESPONSE', 'تعذر تأكيد نتيجة المزوّد', 502);
-    const update = { providerStatus: data.status, providerOrderId: data.order_id, phase: 'checking',
+  async function settle(t, data, resolution = null) {
+    const supportEvidence = resolution?.evidence?.source === 'provider_support';
+    if (!data || !['accept', 'wait', 'reject'].includes(data.status) || (!supportEvidence && (typeof data.order_id !== 'string' || !data.order_id))
+      || (t.providerOrderId && data.order_id && t.providerOrderId !== data.order_id) || (data.order_uuid && data.order_uuid !== t.orderUuid)) fail('INVALID_ORDER_RESPONSE', 'تعذر تأكيد نتيجة المزوّد', 502);
+    const update = { providerStatus: data.status, ...(data.order_id ? { providerOrderId: data.order_id } : {}), phase: 'checking',
       leaseUntil: new Date(0), leaseToken: null, nextCheckAt: new Date(Date.now() + Math.min(300000, 30000 * 2 ** Math.min(t.attempts, 4))), lastError: null };
     try { const cost = new pricing.Decimal(data.price); if (cost.isFinite() && cost.gte(0)) update.providerCostSyp = cost.toFixed(); } catch { /* Cost is optional, not a new customer charge. */ }
-    if (data.status === 'wait') return Transaction.updateOne({ _id: t._id, leaseToken: t.leaseToken, status: 'pending' }, { $set: update });
+    if (data.status === 'wait') return Transaction.updateOne({ _id: t._id, leaseToken: t.leaseToken, status: { $in: RECOVERABLE } },
+      [{ $set: { ...update, status: { $cond: [{ $eq: ['$status', 'manual_review'] }, 'manual_review', 'pending'] },
+        __v: { $add: [{ $ifNull: ['$__v', 0] }, 1] } } }]);
     update.phase = 'done';
     update.status = data.status === 'accept' ? 'completed' : 'refunded';
-    // Keep provider fulfilment text bounded and render it as text only.
-    update.result = data.replay_api == null ? null : JSON.stringify(data.replay_api).slice(0, 4000);
+    // Preserve every delivered value; the UI renders this as text and can collapse long output.
+    update.result = data.replay_api == null ? t.result ?? null : JSON.stringify(data.replay_api);
+    update.reviewReason = null;
+    if (resolution) update.resolution = resolution;
     await atomic(async (session) => {
-      const locked = await Transaction.findOne({ _id: t._id, status: 'pending', leaseToken: t.leaseToken }).session(session);
-      if (!locked) return;
+      const locked = await Transaction.findOne({ _id: t._id, status: { $in: RECOVERABLE }, leaseToken: t.leaseToken }).session(session);
+      if (!locked) fail('ORDER_CHANGED', 'تغيرت حالة الطلب، أعد تحميله', 409);
       const payment = await Payment.findById(t.payment).session(session);
       if (!payment) fail('PAYMENT_MISSING', 'السجل المالي بحاجة للمراجعة', 500);
       await recordPaymentStats(payment, -1, session);
@@ -337,18 +362,24 @@ function createOrderService({ client = provider, readCatalog = (options) => cata
       payment.status = data.status === 'accept' ? 'تم التسديد' : 'غير مسددة';
       await payment.save({ session });
       await recordPaymentStats(payment, 1, session);
-      await Transaction.updateOne({ _id: t._id, leaseToken: t.leaseToken }, { $set: update }, { session });
+      await Transaction.updateOne({ _id: t._id, leaseToken: t.leaseToken }, { $set: update, $inc: { __v: 1 } }, { session });
+      if (resolution) await operations.recordAudit({ provider: 'alragheb', actor: resolution.actor, action: resolution.action,
+        target: String(t._id), note: resolution.note, before: { status: locked.status, amount: locked.totalSyp },
+        after: { status: update.status, refunded: Boolean(update.refundedAt) }, evidence: resolution.evidence }, session);
     });
     await changed().catch(() => {});
   }
   async function processOrder(id) {
     const token = randomUUID();
-    const t = await Transaction.findOneAndUpdate({ _id: id, status: 'pending', leaseUntil: { $lte: new Date() } },
-      { $set: { leaseToken: token, leaseUntil: new Date(Date.now() + 90000) }, $inc: { attempts: 1 } }, { new: true }).lean();
+    const t = await Transaction.findOneAndUpdate({ _id: id, status: { $in: RECOVERABLE }, leaseUntil: { $lte: new Date() } },
+      { $set: { leaseToken: token, leaseUntil: new Date(Date.now() + 90000) }, $inc: { attempts: 1, __v: 1 } }, { new: true }).lean();
     if (!t) return;
     try {
       let data;
       if (t.phase === 'queued') {
+        // A durable stop also pauses an order that was reserved but has not been sent.
+        try { purchaseGate(); await operations.assertPurchasingAllowed('alragheb'); }
+        catch (error) { error.requestOutcome = 'not_sent'; throw error; }
         const sent = await Transaction.updateOne({ _id: t._id, leaseToken: token }, { $set: { phase: 'sending' } });
         if (!sent.matchedCount) return;
         data = (await client.newOrder(t.productId, t.qty, t.params, t.orderUuid))?.data;
@@ -359,14 +390,90 @@ function createOrderService({ client = provider, readCatalog = (options) => cata
       }
       await settle(t, data);
     } catch (error) {
-      await Transaction.updateOne({ _id: t._id, status: 'pending', leaseToken: token }, { $set: { phase: 'checking', leaseToken: null,
-        leaseUntil: new Date(0), nextCheckAt: new Date(Date.now() + 60000), lastError: error.status ? error.code : 'RECONCILIATION_FAILED' } });
+      const settings = await operations.getSettings('alragheb');
+      const notSent = t.phase === 'queued' && error.requestOutcome === 'not_sent';
+      const since = t.uncertainSince || t.createdAt || new Date();
+      const aged = Date.now() - new Date(since).getTime() >= settings.reviewAfterMinutes * 60000;
+      const status = t.status === 'manual_review' || aged ? 'manual_review' : notSent ? 'pending' : 'unknown';
+      const code = operations.safeCode(error.status ? error.code : 'RECONCILIATION_FAILED');
+      await Transaction.updateOne({ _id: t._id, status: { $in: RECOVERABLE }, leaseToken: token }, {
+        $set: { status, phase: notSent ? 'queued' : 'checking', leaseToken: null, leaseUntil: new Date(0),
+          nextCheckAt: new Date(Date.now() + Math.min(300000, 30000 * 2 ** Math.min(t.attempts, 4))), lastError: code,
+          ...(!notSent ? { uncertainSince: t.uncertainSince || new Date() } : {}),
+          ...(!t.firstError?.code ? { firstError: { at: new Date(), code, phase: t.phase, outcome: notSent ? 'not_sent' : 'unknown' } } : {}),
+          ...(status === 'manual_review' ? { reviewSince: t.reviewSince || new Date(), reviewReason: notSent ? 'DISPATCH_NOT_SENT' : 'PROVIDER_OUTCOME_UNCONFIRMED' } : {}),
+        }, $push: { errorHistory: { $each: [{ at: new Date(), code, phase: t.phase, outcome: notSent ? 'not_sent' : 'unknown' }], $slice: -100 } }, $inc: { __v: 1 },
+      });
     }
   }
   async function reconcile() {
-    const pending = await Transaction.find({ status: 'pending', nextCheckAt: { $lte: new Date() }, leaseUntil: { $lte: new Date() } }).sort({ nextCheckAt: 1 }).limit(20).select('_id').lean();
-    for (const t of pending) await processOrder(String(t._id));
+    const settings = await operations.getSettings('alragheb');
+    const cutoff = new Date(Date.now() - settings.reviewAfterMinutes * 60000);
+    await Transaction.updateMany({ status: { $in: ['pending', 'unknown'] }, createdAt: { $lte: cutoff } }, {
+      $set: { status: 'manual_review', reviewSince: new Date(), reviewReason: 'ORDER_AGE_EXCEEDED' }, $inc: { __v: 1 },
+    });
+    const pending = await Transaction.find({ status: { $in: RECOVERABLE }, nextCheckAt: { $lte: new Date() }, leaseUntil: { $lte: new Date() } }).sort({ nextCheckAt: 1 }).limit(20).select('_id').lean();
+    let cursor = 0;
+    await Promise.all(Array.from({ length: Math.min(settings.workerConcurrency, pending.length) }, async () => {
+      while (cursor < pending.length) { const index = cursor++; await processOrder(String(pending[index]._id)); }
+    }));
     return pending.length;
+  }
+  async function checkTransaction(id, { actorId, isAdmin = false } = {}) {
+    if (!isAdmin || !objectId(String(actorId))) fail('FORBIDDEN', 'هذه العملية مخصصة للمسؤول', 403);
+    const before = await getOrder(actorId, id, true);
+    if (before.next_check_at && Date.parse(before.next_check_at) > Date.now()) fail('CHECK_COOLDOWN', 'انتظر موعد الفحص التالي', 429);
+    await processOrder(id);
+    const after = await getOrder(actorId, id, true);
+    await operations.recordAudit({ provider: 'alragheb', actor: actorId, action: 'order_checked', target: id,
+      note: 'فحص المسؤول حالة الطلب لدى المزوّد', before: { status: before.status }, after: { status: after.status } });
+    return after;
+  }
+  async function resolveTransaction(id, body = {}) {
+    if (!body.isAdmin || !objectId(String(body.actorId))) fail('FORBIDDEN', 'هذه العملية مخصصة للمسؤول', 403);
+    if (!objectId(id) || !['resolve_failed', 'resolve_completed'].includes(body.action) || !Number.isSafeInteger(body.revision)) fail('INVALID_RESOLUTION', 'بيانات التسوية غير صالحة');
+    const note = operations.cleanNote(body.note, 10);
+    const existing = await Transaction.findById(id).lean();
+    if (!existing) fail('ORDER_NOT_FOUND', 'الطلب غير موجود', 404);
+    if (!RECOVERABLE.includes(existing.status)) {
+      if (existing.resolution?.action === body.action) return publicOrder(existing, true);
+      fail('ORDER_FINAL', 'الطلب محسوم ولا يحتاج تسوية', 409);
+    }
+    if ((existing.__v || 0) !== body.revision) fail('ORDER_CHANGED', 'تغير الطلب، أعد تحميله', 409);
+    const evidence = body.providerEvidence;
+    const expected = body.action === 'resolve_failed' ? 'rejected' : 'completed';
+    if (!evidence || typeof evidence !== 'object' || Array.isArray(evidence) || !['provider_api', 'provider_support'].includes(evidence.source)
+      || ![existing.orderUuid, existing.providerOrderId].filter(Boolean).includes(evidence.providerReference)
+      || evidence.confirmedOutcome !== expected || typeof evidence.checkedAt !== 'string' || !Number.isFinite(Date.parse(evidence.checkedAt))
+      || Date.parse(evidence.checkedAt) > Date.now() + 300000
+      || (evidence.source === 'provider_support' && (typeof evidence.ticketReference !== 'string' || evidence.ticketReference.trim().length < 3 || evidence.ticketReference.length > 200))) {
+      fail('INVALID_EVIDENCE', 'يلزم مرجع المزوّد ونتيجة مؤكدة وتاريخ التحقق، مع رقم تذكرة الدعم عند المراجعة اليدوية');
+    }
+    const cleanEvidence = { source: evidence.source, providerReference: evidence.providerReference, confirmedOutcome: expected,
+      checkedAt: new Date(evidence.checkedAt), ...(evidence.source === 'provider_support' ? { ticketReference: evidence.ticketReference.trim() } : {}) };
+    let data;
+    try {
+      const response = await client.checkOrder(existing.orderUuid);
+      if (Array.isArray(response?.data) && response.data.length === 1) data = response.data[0];
+    } catch (error) {
+      if (evidence.source !== 'provider_support') throw error;
+    }
+    if (data && ['accept', 'reject', 'wait'].includes(data.status)) {
+      if (data.status !== (expected === 'rejected' ? 'reject' : 'accept')) fail('PROVIDER_EVIDENCE_CONFLICT', 'حالة المزوّد لا تطابق التسوية المطلوبة', 409);
+      cleanEvidence.source = 'provider_api';
+      cleanEvidence.providerOrderId = data.order_id;
+    } else {
+      if (evidence.source !== 'provider_support' || existing.status !== 'manual_review') fail('ORDER_UNCONFIRMED', 'النتيجة غير مؤكدة؛ يلزم مراجعة الطلب وتأكيد موثق من دعم المزوّد', 409);
+      data = { status: expected === 'rejected' ? 'reject' : 'accept', ...(existing.providerOrderId ? { order_id: existing.providerOrderId } : {}) };
+    }
+    const token = randomUUID();
+    const versionFilter = existing.__v == null ? { $or: [{ __v: body.revision }, { __v: { $exists: false } }] } : { __v: body.revision };
+    const locked = await Transaction.findOneAndUpdate({ _id: id, status: { $in: RECOVERABLE }, leaseUntil: { $lte: new Date() }, ...versionFilter },
+      { $set: { leaseToken: token, leaseUntil: new Date(Date.now() + 90000) }, $inc: { __v: 1 } }, { new: true }).lean();
+    if (!locked) fail('ORDER_CHANGED', 'تغير الطلب أو يجري فحصه، أعد تحميله', 409);
+    try { await settle(locked, data, { actor: body.actorId, action: body.action, note, at: new Date(), evidence: cleanEvidence }); }
+    finally { await Transaction.updateOne({ _id: id, leaseToken: token }, { $set: { leaseToken: null, leaseUntil: new Date(0) } }); }
+    return getOrder(body.actorId, id, true);
   }
   async function getOrder(userId, id, admin = false) {
     if (!objectId(id)) fail('ORDER_NOT_FOUND', 'الطلب غير موجود', 404);
@@ -380,7 +487,7 @@ function createOrderService({ client = provider, readCatalog = (options) => cata
     if (!Number.isSafeInteger(page) || page < 1 || page > 100000 || !Number.isSafeInteger(limit) || limit < 1 || limit > 100) fail('INVALID_QUERY', 'التصفح غير صالح');
     const filter = admin ? {} : { user: userId };
     if (query.status) {
-      if (!['pending', 'completed', 'refunded'].includes(query.status)) fail('INVALID_QUERY', 'الحالة غير صالحة');
+      if (!['pending', 'unknown', 'manual_review', 'completed', 'refunded'].includes(query.status)) fail('INVALID_QUERY', 'الحالة غير صالحة');
       filter.status = query.status;
     }
     if (query.product_id) {
@@ -389,9 +496,8 @@ function createOrderService({ client = provider, readCatalog = (options) => cata
     }
     for (const key of ['from', 'to']) {
       if (query[key]) {
-        if (typeof query[key] !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(query[key]) || !Number.isFinite(Date.parse(query[key]))) fail('INVALID_QUERY', 'التاريخ غير صالح');
         filter.createdAt ||= {};
-        filter.createdAt[key === 'from' ? '$gte' : '$lt'] = new Date(Date.parse(query[key]) + (key === 'to' ? 86400000 : 0));
+        filter.createdAt[key === 'from' ? '$gte' : '$lt'] = operations.dayBoundary(query[key], key === 'to');
       }
     }
     const total = await Transaction.countDocuments(filter);
@@ -400,10 +506,10 @@ function createOrderService({ client = provider, readCatalog = (options) => cata
   }
   async function summary() {
     const rows = await Transaction.aggregate([{ $group: { _id: '$status', count: { $sum: 1 }, amount: { $sum: { $toDecimal: '$totalSyp' } }, oldest: { $min: '$createdAt' } } }]);
-    return { currency: 'SYP', purchase_enabled: pricing.enabled() && pricing.moneyReady(),
+    return { currency: 'SYP', purchase_enabled: pricing.enabled() && pricing.moneyReady() && provider.isCatalogEnabled() && (await operations.getSettings('alragheb')).purchaseEnabled,
       configured_products: await Config.countDocuments({ purchaseEnabled: true }),
       statuses: Object.fromEntries(rows.map((r) => [r._id, { count: r.count, amount_syp: r.amount.toString(), oldest: r.oldest }])) };
   }
-  return { createQuote, submit, saveConfig, previewMarkup, applyMarkup, listPricingRules, savePricingRule, decorateProducts, getOrder, listOrders, processOrder, reconcile, checkDatabase, summary };
+  return { createQuote, submit, saveConfig, previewMarkup, applyMarkup, listPricingRules, savePricingRule, decorateProducts, getOrder, listOrders, processOrder, reconcile, checkTransaction, resolveTransaction, checkDatabase, summary };
 }
 module.exports = { ...createOrderService(), createOrderService, publicOrder };

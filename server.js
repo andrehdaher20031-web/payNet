@@ -1,7 +1,7 @@
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-require('dotenv').config();
+if (require.main === module) require('dotenv').config();
 const saveBalanceRoutes = require('./routes/saveBalance');
 const invoiceRoutes = require('./routes/invoice');
 const adminRoutes = require('./routes/admin');
@@ -31,19 +31,7 @@ const io = new Server(server, {
   },
 });
 
-// تخزين سوكيت للعملاء
-io.on('connection', (socket) => {
-  console.log('✅ عميل جديد متصل عبر سوكيت');
-
-  socket.on('joinRoom', (email) => {
-    socket.join(email);
-    console.log(`Client ${socket.id} joined room: ${email}`);
-  });
-
-  socket.on('disconnect', () => {
-    console.log('❌ تم فصل الاتصال بالعميل');
-  });
-});
+require('./services/socketSecurity.service').configureSocketSecurity(io);
 
 // إتاحة الـ io للوصول من أي مكان
 app.set('io', io); // مهم جداً
@@ -51,6 +39,9 @@ app.set('io', io); // مهم جداً
 // Middlewares
 app.use(cors());
 app.use(express.json());
+app.use(require('./services/userActivity.service').observeRequests);
+app.use('/api/activity', require('./routes/activity'));
+app.use('/api/admin/user-monitoring', require('./routes/userMonitoring'));
 
 // تمرير io لكل request
 app.use((req, res, next) => {
@@ -86,6 +77,7 @@ app.use('/api/backup', require('./routes/backup'));
 
 //ترحيل العمليات
 app.use('/api/admin/alragheb', require('./routes/alraghebAdminRoutes'));
+app.use('/api/admin/integrations', require('./routes/providerOperationsRoutes'));
 app.use('/api/admin', adminRoutes);
 app.use('/api/product', require('./routes/product'));
 
@@ -122,15 +114,22 @@ const startServer = async () => {
     await mongoose.connect(MONGO_URI, {
       serverSelectionTimeoutMS: 10000,
     });
-    await Promise.all(['AlraghebProductConfig', 'AlraghebPriceQuote', 'AlraghebTransaction', 'AlraghebConfigAudit', 'AlraghebPricingBatch', 'AlraghebPricingRule']
+    const topology = await mongoose.connection.db.admin().command({ hello: 1 });
+    if (!topology.setName && topology.msg !== 'isdbgrid') throw new Error('MongoDB replica set is required for safe wallet transactions');
+    await Promise.all(['AlraghebCatalogSnapshot', 'AlraghebProductConfig', 'AlraghebPriceQuote', 'AlraghebTransaction', 'AlraghebConfigAudit', 'AlraghebPricingBatch', 'AlraghebPricingRule', 'AlraghebPricingRuleAudit', 'ProWaveProductConfig', 'ProWaveTransaction', 'ProWavePriceQuote', 'ProviderIntegrationSettings', 'ProviderIntegrationAudit', 'ProviderWorkerHealth', 'WalletAdjustment', 'UserActivity', 'UserOperation', 'MonitoringSettings', 'UserFollowUp']
       .map((name) => require(`./models/${name}`).init()));
 
     server.listen(PORT, '0.0.0.0', () => {
       console.log(`Server running on port ${PORT}`);
+      if (process.env.ALRAGHEB_API_TOKEN && require('./services/alraghebApi').isCatalogEnabled()) {
+        require('./services/alraghebCatalog.service').getCatalog({ background: true })
+          .catch((error) => console.warn('Alragheb catalog warm-up unavailable:', error.code || 'CATALOG_UNAVAILABLE'));
+      }
       startReconciliationScheduler();
       startDirectTopUpStatusScheduler();
       startAlesoOrderStatusScheduler();
       require('./services/alraghebReconciliation.service').start();
+      require('./services/userMonitoring.service').start();
     });
   } catch (err) {
     console.error('Failed to start server');
@@ -139,4 +138,5 @@ const startServer = async () => {
   }
 };
 
-startServer();
+if (require.main === module) startServer();
+module.exports = { app, server, io, startServer };

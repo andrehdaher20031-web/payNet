@@ -84,7 +84,7 @@ const emitPendingPayments = async (req) => {
     .sort({ createdAt: -1 })
     .limit(500)
     .lean();
-  io.emit('pendingPaymentsUpdate', pendingPayments);
+  io.to('admins').emit('pendingPaymentsUpdate', pendingPayments);
 };
 
 router.post('/internet-full', authMiddleware, async (req, res) => {

@@ -39,6 +39,47 @@ test('imports every descendant, de-duplicates concurrent refreshes and uses the 
   assert.equal(setup.calls.length, 3);
 });
 
+test('loads prices once and traverses every nested category through lightweight indexes', async () => {
+  const calls = [];
+  const content = {
+    1: { products: [{ id: '57', name: 'App 57' }], categories: [{ id: 13, name: 'IMO', parent_id: 1 }] },
+    13: { products: [{ id: '245', name: 'App 245' }], categories: [{ id: 99, name: 'Nested', parent_id: 13 }] },
+    99: { products: [{ id: '999', name: 'App 999' }], categories: [] },
+  };
+  const service = createCatalogService({
+    storage: { get: async () => null, set: async () => {} },
+    client: {
+      getProducts: async () => { calls.push('prices'); return [product(57, 1, { price: '0.123456789' }), product(245, 13), product(999, 99), product(101, 8)]; },
+      getContentIndex: async (id) => { calls.push(id); return content[id]; },
+      getContent: async () => { throw new Error('The heavy content endpoint must not block catalog browsing'); },
+    },
+  });
+  const snapshot = await service.getCatalog();
+  assert.deepEqual(calls, ['prices', 1, 13, 99]);
+  assert.equal(snapshot.products.length, 3);
+  assert.equal(snapshot.categories.length, 3);
+  assert.equal(snapshot.products.find((p) => p.id === 57).provider_price, '0.123456789');
+  assert.deepEqual(selectContent(snapshot, 99).data.breadcrumbs.map((c) => c.id), [1, 13, 99]);
+});
+
+test('an index with a missing or differently scoped product cannot publish partial prices', async () => {
+  let rows = [product(57, 13)];
+  let published = 0;
+  const service = createCatalogService({
+    storage: { get: async () => null, set: async () => { published += 1; } },
+    client: {
+      getProducts: async () => rows,
+      getContentIndex: async () => ({ products: [{ id: 57, name: 'App' }], categories: [] }),
+    },
+  });
+  await assert.rejects(service.getCatalog(), { code: 'ALRAGHEB_INVALID_RESPONSE' });
+  rows = [];
+  await assert.rejects(service.getCatalog({ force: true }), { code: 'ALRAGHEB_INVALID_RESPONSE' });
+  rows = [product(57, 1), product(58, 1)];
+  await assert.rejects(service.getCatalog({ force: true }), { code: 'ALRAGHEB_INVALID_RESPONSE' });
+  assert.equal(published, 0);
+});
+
 test('keeps a complete snapshot on partial provider failure and marks it stale', async () => {
   const setup = fixture();
   await setup.service.getCatalog();
@@ -48,6 +89,93 @@ test('keeps a complete snapshot on partial provider failure and marks it stale',
   assert.equal(stale.stale, true);
   assert.equal(stale.products.length, 3);
   await assert.rejects(setup.service.getCatalog({ force: true }));
+});
+
+test('browsing returns the complete cached catalog immediately while one refresh runs', async () => {
+  const setup = fixture();
+  await setup.service.getCatalog();
+  setup.advance();
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  setup.data[13] = gate;
+  const browsing = await setup.service.getCatalog({ background: true });
+  const second = await setup.service.getCatalog({ background: true });
+  assert.equal(browsing.products.length, 3);
+  assert.equal(browsing.stale, true);
+  assert.equal(browsing.refreshing, true);
+  assert.equal(selectContent(browsing, 1).meta.refreshing, true);
+  assert.equal(second.refreshing, true);
+  const fresh = setup.service.getCatalog();
+  release({ products: [product(245, 13)], categories: [{ id: 99, name: 'Nested', parent_id: 13 }] });
+  const result = await fresh;
+  assert.equal(result.stale, undefined);
+  assert.equal(result.products.length, 3);
+  assert.equal(setup.calls.filter((id) => id === 13).length, 2);
+});
+
+test('a failed background refresh retains every product and observes the retry cooldown', async () => {
+  const setup = fixture();
+  await setup.service.getCatalog();
+  setup.advance();
+  setup.data[99] = Object.assign(new Error('slow provider category'), { code: 'ALRAGHEB_TIMEOUT' });
+  const refreshing = await setup.service.getCatalog({ background: true });
+  assert.equal(refreshing.products.length, 3);
+  await assert.rejects(setup.service.getCatalog({ force: true }), { code: 'ALRAGHEB_TIMEOUT' });
+  const callCount = setup.calls.length;
+  const retained = await setup.service.getCatalog({ background: true });
+  assert.equal(retained.stale, true);
+  assert.equal(retained.refreshing, false);
+  assert.equal(retained.products.length, 3);
+  assert.equal(setup.calls.length, callCount);
+});
+
+test('a new service restores the last complete snapshot after restart and never publishes a partial tree', async () => {
+  const setup = fixture();
+  const saved = await setup.service.getCatalog();
+  let published = 0;
+  let stored = null;
+  let providerCalls = 0;
+  const service = createCatalogService({
+    now: () => Date.parse(saved.synced_at) + 121000,
+    storage: { get: async () => stored, set: async (_key, value) => { stored = value; } },
+    snapshots: { namespace: () => 'isolated-account', load: async () => saved, save: async () => { published += 1; } },
+    client: { getContent: async (id) => {
+      providerCalls += 1;
+      if (id === 1) return { products: [product(57, 1)], categories: [{ id: 13, name: 'IMO', parent_id: 1 }] };
+      throw Object.assign(new Error('slow nested category'), { code: 'ALRAGHEB_TIMEOUT' });
+    } },
+  });
+  const restored = await service.getCatalog();
+  assert.equal(restored.stale, true);
+  assert.equal(restored.products.length, 3);
+  assert.equal(stored.products.length, 3);
+  assert.equal(providerCalls, 2);
+  assert.equal(published, 0);
+});
+
+test('a cold failed refresh is shared and does not repeatedly hammer the provider', async () => {
+  let calls = 0;
+  const service = createCatalogService({
+    storage: { get: async () => null, set: async () => {} },
+    client: { getContent: async () => { calls += 1; throw Object.assign(new Error('unavailable'), { code: 'ALRAGHEB_TIMEOUT' }); } },
+  });
+  await assert.rejects(service.getCatalog(), { code: 'ALRAGHEB_TIMEOUT' });
+  await assert.rejects(service.getCatalog(), { code: 'ALRAGHEB_TIMEOUT' });
+  assert.equal(calls, 1);
+  await assert.rejects(service.getCatalog({ force: true }), { code: 'ALRAGHEB_TIMEOUT' });
+  assert.equal(calls, 2);
+});
+
+test('a snapshot older than one hour cannot become a current or purchasable catalog', async () => {
+  const setup = fixture();
+  const saved = await setup.service.getCatalog();
+  const service = createCatalogService({
+    now: () => Date.parse(saved.synced_at) + 3600001,
+    storage: { get: async () => null, set: async () => {} },
+    snapshots: { load: async () => saved, save: async () => {} },
+    client: { getContent: async () => { throw Object.assign(new Error('unavailable'), { code: 'ALRAGHEB_TIMEOUT' }); } },
+  });
+  await assert.rejects(service.getCatalog(), { code: 'ALRAGHEB_TIMEOUT' });
 });
 
 test('rejects malformed content and category cycles instead of publishing a partial catalog', async () => {

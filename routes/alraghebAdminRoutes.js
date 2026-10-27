@@ -8,6 +8,7 @@ router.get('/products', controller.getAdminProducts);
 router.post('/catalog/refresh', controller.refreshCatalog);
 router.get('/pricing/rules', controller.pricingRules);
 router.put('/pricing/rules/:categoryId', controller.savePricingRule);
+router.get('/pricing/rules/:categoryId/history', controller.ruleHistory);
 router.post('/pricing/preview', controller.previewMarkup);
 router.post('/pricing/apply', controller.applyMarkup);
 router.patch('/products/:productId', controller.saveConfig);

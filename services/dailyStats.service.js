@@ -49,7 +49,7 @@ const recordPaymentStats = async (payment, direction = 1, session) => {
   return updateDailyStats(payment.createdAt || new Date(), inc, session);
 };
 
-const recordBalanceStats = async (balance, direction = 1) => {
+const recordBalanceStats = async (balance, direction = 1, session) => {
   if (!balance) return null;
 
   const amount = Number(balance.amount || 0) * direction;
@@ -60,7 +60,7 @@ const recordBalanceStats = async (balance, direction = 1) => {
   incCounter(inc, 'balances.total', amount, count);
   incCounter(inc, `balances.${bucket}`, amount, count);
 
-  return updateDailyStats(balance.date || balance.createdAt || new Date(), inc);
+  return updateDailyStats(balance.date || balance.createdAt || new Date(), inc, session);
 };
 
 const recordInvoiceStats = async (invoice, direction = 1) => {

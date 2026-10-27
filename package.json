@@ -6,9 +6,14 @@
     "start": "node server.js",
     "dev": "nodemon server.js",
     "backup": "node backup.js",
-    "test:alragheb": "node --test tests/alraghebCatalog.test.js tests/alraghebRoutes.test.js tests/alraghebPurchase.test.js tests/alraghebPricingPreview.test.js tests/alraghebActivation.test.js",
+    "test:monitoring": "node --test tests/userMonitoring.test.js",
+    "backfill:monitoring": "node scripts/backfill-user-monitoring.js",
+    "users:password-reset:list": "node scripts/list-users-needing-plain-password.js",
+    "users:password-reset:plain": "node scripts/reset-plain-passwords.js",
+    "test:alragheb": "node --test tests/alraghebApi.test.js tests/alraghebCatalog.test.js tests/alraghebCatalogPersistence.test.js tests/alraghebRoutes.test.js tests/alraghebPurchase.test.js tests/alraghebPricingPreview.test.js tests/alraghebActivation.test.js",
     "activate:alragheb": "node scripts/activate-alragheb.js",
-    "verify:alragheb:live": "node scripts/verify-alragheb-live.js"
+    "verify:alragheb:live": "node scripts/verify-alragheb-live.js",
+    "verify:alragheb:display": "node scripts/verify-alragheb-display.js"
   },
   "keywords": [],
   "author": "",

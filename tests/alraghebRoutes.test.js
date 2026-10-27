@@ -5,18 +5,21 @@ const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const catalog = require('../services/alraghebCatalog.service');
 const provider = require('../services/alraghebApi');
+const operations = require('../services/providerOperations.service');
 
 test('authenticated catalog and admin routes enforce access and response boundaries', async (t) => {
   process.env.JWT_SECRET = 'alragheb-isolated-test-secret';
   delete process.env.ALRAGHEB_CATALOG_ENABLED;
   const userId = '507f1f77bcf86cd799439011';
   const disabledId = '507f1f77bcf86cd799439012';
-  t.mock.method(User, 'findById', (id) => ({ select: () => ({ lean: async () => ({ role: 'user', card: { cardapplication: id !== disabledId } }) }) }));
+  const adminId = '507f1f77bcf86cd799439013';
+  t.mock.method(User, 'findById', (id) => ({ select: () => ({ lean: async () => ({ _id: id, email: 'test@example.invalid', role: String(id) === adminId ? 'admin' : 'user', card: { cardapplication: String(id) !== disabledId } }) }) }));
   t.mock.method(catalog, 'getCatalog', async () => ({
     synced_at: new Date().toISOString(), categories: [{ id: 1, name: 'Chat', parent_id: 0 }],
     products: [{ id: 57, name: 'AHLAN', category_id: 1, available: true, params: [], quantity_rules: { mode: 'fixed', defaultQty: 1 }, provider_price: 2, provider_base_price: 1 }],
   }));
   t.mock.method(provider, 'getProfile', async () => ({ balance: '50', email: 'test@example.invalid', privateField: 'hidden' }));
+  t.mock.method(operations, 'getSettings', async () => ({ provider: 'alragheb', purchaseEnabled: true, revision: 0 }));
   const app = express();
   app.use(express.json());
   app.use('/api/alragheb', require('../routes/alraghebRoutes'));
@@ -25,11 +28,12 @@ test('authenticated catalog and admin routes enforce access and response boundar
   await new Promise((resolve) => server.once('listening', resolve));
   t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
   const base = `http://127.0.0.1:${server.address().port}`;
-  const get = (path, role, id = userId) => fetch(base + path, { headers: role ? { Authorization: `Bearer ${jwt.sign({ id, role }, process.env.JWT_SECRET)}` } : {} });
+  const get = (path, role, id = role === 'admin' ? adminId : userId) => fetch(base + path, { headers: role ? { Authorization: `Bearer ${jwt.sign({ id, role }, process.env.JWT_SECRET)}` } : {} });
 
   assert.equal((await get('/api/alragheb/products')).status, 401);
   assert.equal((await get('/api/alragheb/profile', 'user')).status, 403);
   assert.equal((await get('/api/admin/alragheb/products', 'user')).status, 403);
+  assert.equal((await get('/api/admin/alragheb/products', 'admin', userId)).status, 403);
   for (const path of ['preview', 'apply']) {
     const response = await fetch(`${base}/api/admin/alragheb/pricing/${path}`, { method: 'POST', headers: { Authorization: `Bearer ${jwt.sign({ id: userId, role: 'user' }, process.env.JWT_SECRET)}`, 'Content-Type': 'application/json' }, body: '{}' });
     assert.equal(response.status, 403);

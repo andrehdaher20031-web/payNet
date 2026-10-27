@@ -1,5 +1,8 @@
 const expess = require('express');
 const router = expess.Router();
+const auth = require('../middleware/authMiddleware');
+const requireAdmin = require('../middleware/requireAdmin');
+router.use((req, res, next) => req.method === 'GET' ? next() : auth(req, res, () => requireAdmin(req, res, next)));
 const ProductOnline = require("../models/ProductOnline");
 const midaleware = require("../middleware/auth");
 const { cache, cacheKey, getOrSet } = require("../services/cache.service");

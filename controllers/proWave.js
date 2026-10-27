@@ -1,7 +1,9 @@
 const axios = require('axios');
+const proWaveOrders = require('../services/proWaveOrder.service');
+const proWaveProtocol = require('../services/proWaveProtocol.service');
+const proWaveProducts = require('../services/proWaveProduct.service');
 const mongoose = require('mongoose');
 const User = require('../models/User');
-const Payment = require('../models/Payment');
 const ProWavePriceQuote = require('../models/ProWavePriceQuote');
 const ProWaveTransaction = require('../models/ProWaveTransaction');
 const {
@@ -16,12 +18,8 @@ const {
   getExchangeRateConfig,
 } = require('../services/exchangeRate.service');
 const {
-  createPendingTransaction,
   extractProWaveBalanceUsd,
   getInvoiceAmountUsd,
-  markCompletedTransaction,
-  markFailedTransaction,
-  markPayNetReserved,
   getReconciliationReport,
   reconcileTransactionsWithInvoices,
 } = require('../services/proWaveLedger.service');
@@ -81,11 +79,7 @@ const DIRECT_TOPUP_ITEM_GROUP_BY_GAME = {
 };
 
 const itemsCache = new Map();
-let proWavePurchaseLock = Promise.resolve();
 let reconciliationSchedulerStarted = false;
-let directTopUpStatusSchedulerStarted = false;
-let directTopUpStatusRefreshRunning = false;
-const directTopUpFollowUpRefreshes = new Set();
 
 const getProWaveHeaders = () => {
   const { PROWAVE_API_KEY, PROWAVE_API_SECRET } = process.env;
@@ -110,12 +104,6 @@ const toNumber = (value, fallback) => {
 const getFirstPresent = (...values) =>
   values.find((value) => value !== undefined && value !== null && value !== '');
 
-const normalizeClientRequestId = (value) => {
-  const normalized = String(value || '').trim();
-  if (!normalized) return '';
-  return normalized.slice(0, 128);
-};
-
 const toPositiveNumber = (...values) =>
   values.map((value) => toNumber(value, 0)).find((value) => value > 0) || 0;
 
@@ -132,14 +120,6 @@ const getMissingQueryParams = (query, requiredParams) =>
 
 const getMissingBodyParams = (body, requiredParams) =>
   requiredParams.filter((param) => !body[param]);
-
-const normalizeExtra = (bodyExtra, extraFields = {}) => {
-  if (bodyExtra && typeof bodyExtra === 'object' && !Array.isArray(bodyExtra)) {
-    return { ...extraFields, ...bodyExtra };
-  }
-
-  return bodyExtra !== undefined ? bodyExtra : extraFields;
-};
 
 const sendSuccess = (res, data) => {
   res.json({
@@ -258,7 +238,7 @@ const sendError = (res, error, message) => {
     provider: isProWaveAxiosError(error) ? PROWAVE_PROVIDER : undefined,
     providerCode,
     providerReferenceId,
-    error: details,
+    code: error.code,
   });
 };
 
@@ -283,23 +263,6 @@ const postToProWave = (url, data) =>
   prowave.post(url, data, {
     headers: getProWaveHeaders(),
   });
-
-const withProWavePurchaseLock = async (task) => {
-  const previousLock = proWavePurchaseLock;
-  let releaseLock;
-
-  proWavePurchaseLock = new Promise((resolve) => {
-    releaseLock = resolve;
-  });
-
-  await previousLock;
-
-  try {
-    return await task();
-  } finally {
-    releaseLock();
-  }
-};
 
 const getProWaveBalanceSnapshot = async () => {
   try {
@@ -351,384 +314,6 @@ const getProWaveMessage = (responseData, fallback = '') => {
   return message || fallback;
 };
 
-const normalizeProWaveText = (value) =>
-  getReadableErrorMessage(value).trim().toLowerCase();
-
-const isFailureText = (value) => {
-  const normalized = normalizeProWaveText(value);
-  if (!normalized) return false;
-
-  return [
-    'failed',
-    'failure',
-    'error',
-    'exception',
-    'not successfully',
-    'unsuccessful',
-    'insufficient',
-    'not available',
-    'unavailable',
-    'out of stock',
-    'cancelled',
-    'canceled',
-    'rejected',
-    'فشل',
-    'خطأ',
-    'غير ناجح',
-    'غير متوفر',
-  ].some((pattern) => normalized.includes(pattern));
-};
-
-const isSuccessText = (value) => {
-  const normalized = normalizeProWaveText(value);
-  if (!normalized || isFailureText(normalized)) return false;
-
-  return [
-    'purchase completed successfully',
-    'completed successfully',
-    'purchased successfully',
-    'successfully',
-    'success',
-    'succeeded',
-    'تم بنجاح',
-    'بنجاح',
-    'ناجح',
-  ].some((pattern) => normalized.includes(pattern));
-};
-
-const isFailureStatusValue = (value) => {
-  if (value === false) return true;
-  if (typeof value === 'number') return value <= 0;
-
-  const normalized = String(value || '').trim().toUpperCase();
-  if (!normalized) return false;
-
-  return [
-    '0',
-    'FALSE',
-    'FAIL',
-    'FAILED',
-    'FAILURE',
-    'ERROR',
-    'EXCEPTION',
-    'REJECTED',
-    'CANCELLED',
-    'CANCELED',
-  ].includes(normalized);
-};
-
-const isSuccessStatusValue = (value) => {
-  if (value === true) return true;
-  if (typeof value === 'number') return value > 0;
-
-  const normalized = String(value || '').trim().toUpperCase();
-  if (!normalized) return false;
-
-  return [
-    '1',
-    'TRUE',
-    'SUCCESS',
-    'SUCCEEDED',
-    'COMPLETED',
-    'COMPLETE',
-    'OK',
-    '200',
-  ].includes(normalized);
-};
-
-const isProWaveSuccess = (responseData) => {
-  const payload = getProWavePayload(responseData);
-  const statusCandidates = [
-    responseData?.success,
-    payload?.success,
-    responseData?.status,
-    payload?.status,
-    responseData?.code,
-    payload?.code,
-    responseData?.message?.status,
-    responseData?.message?.code,
-  ];
-
-  if (statusCandidates.some(isFailureStatusValue)) return false;
-  if (statusCandidates.some(isSuccessStatusValue)) return true;
-
-  const message = getProWaveMessage(responseData, '');
-  if (isFailureText(message)) return false;
-  if (getDigitalCodes(responseData).length) return true;
-  if (getInvoiceName(payload, responseData)) return true;
-
-  return isSuccessText(message);
-};
-
-const hasDigitalCodeFields = (value) =>
-  isPlainObject(value) &&
-  getFirstPresent(
-    value.code,
-    value.pin,
-    value.card_number,
-    value.cardNumber,
-    value.serial,
-    value.digital_code,
-    value.digitalCode,
-    value.voucher,
-    value.password
-  ) !== undefined;
-
-const normalizeDigitalCodeList = (value) => {
-  if (value === undefined || value === null || value === '') return [];
-  if (Array.isArray(value)) return value.filter((item) => item !== undefined && item !== null && item !== '');
-  if (!isPlainObject(value)) return [value];
-  if (hasDigitalCodeFields(value)) return [value];
-
-  return Object.values(value).filter(
-    (item) => item !== undefined && item !== null && item !== ''
-  );
-};
-
-const getDigitalCodes = (responseData) => {
-  const payload = getProWavePayload(responseData);
-  const candidates = [
-    payload?.digital_codes,
-    payload?.digitalCodes,
-    payload?.digital_code,
-    payload?.digitalCode,
-    payload?.codes,
-    payload?.cards,
-    payload?.items,
-    responseData?.digital_codes,
-    responseData?.digitalCodes,
-    responseData?.codes,
-    responseData?.cards,
-    responseData?.message?.digital_codes,
-    responseData?.message?.data?.digital_codes,
-    responseData?.data?.digital_codes,
-    responseData?.data?.codes,
-  ];
-
-  for (const candidate of candidates) {
-    const codes = normalizeDigitalCodeList(candidate);
-    if (codes.length) return codes;
-  }
-
-  return hasDigitalCodeFields(payload) ? [payload] : [];
-};
-
-const getInvoiceName = (payload, responseData = {}) =>
-  getFirstPresent(
-    payload?.sales_invoice,
-    payload?.invoice_name,
-    payload?.invoice,
-    payload?.name,
-    responseData?.sales_invoice,
-    responseData?.invoice_name,
-    responseData?.invoice,
-    responseData?.message?.sales_invoice,
-    responseData?.message?.data?.sales_invoice,
-    responseData?.data?.sales_invoice,
-    responseData?.data?.invoice_name,
-    responseData?.data?.invoice
-  );
-
-const getProWaveTotalAmount = (payload) =>
-  toNumber(
-    getFirstPresent(
-      payload?.['Total Amount'],
-      payload?.total_amount,
-      payload?.totalAmount,
-      payload?.amount
-    ),
-    null
-  );
-
-const logProWaveResponse = (label, data) => {
-  if (process.env.PROWAVE_DEBUG_RESPONSE !== 'true') return;
-
-  try {
-    console.log(`[ProWave] ${label}:`, JSON.stringify(data, null, 2));
-  } catch {
-    console.log(`[ProWave] ${label}:`, data);
-  }
-};
-
-const CUSTOMER_HIDDEN_PAYMENT_EXTRA_KEYS = [
-  'prowave_priced_item',
-  'prowave_catalog_item',
-  'prowave_response',
-  'prowave_purchase_data',
-  'prowave_codes_response',
-  'prowave_total_amount_usd',
-  'prowave_balance_before_response',
-  'prowave_balance_after_response',
-  'prowave_unit_cost_usd',
-  'provider_unit_cost_usd',
-  'prowave_provider_discount_usd',
-  'prowave_provider_discount_percent',
-  'provider_cost_usd',
-  'provider_discount_usd',
-  'provider_discount_percent',
-];
-
-const CUSTOMER_HIDDEN_TRANSACTION_KEYS = [
-  'unitPriceUsd',
-  'saleUnitPriceUsd',
-  'providerUnitCostUsd',
-  'providerDiscountUsd',
-  'providerDiscountPercent',
-  'expectedProviderDebitUsd',
-  'actualProviderDebitUsd',
-  'invoiceProviderDebitUsd',
-  'expectedCostSyp',
-  'actualCostSyp',
-  'profitSyp',
-  'profitPercent',
-  'prowaveBalanceBeforeUsd',
-  'prowaveBalanceAfterUsd',
-  'providerBalanceStatus',
-  'invoiceMatchStatus',
-  'mismatchReason',
-  'rawProviderBalanceBefore',
-  'rawProviderBalanceAfter',
-  'rawPurchaseResponse',
-  'rawDirectTopupStatusResponse',
-  'rawCodesResponse',
-  'rawInvoice',
-];
-
-const sanitizePaymentForCustomer = (payment) => {
-  const plain = typeof payment?.toObject === 'function' ? payment.toObject() : payment;
-
-  if (!isPlainObject(plain)) return plain;
-  if (!isPlainObject(plain.extra)) return plain;
-
-  const extra = { ...plain.extra };
-  CUSTOMER_HIDDEN_PAYMENT_EXTRA_KEYS.forEach((key) => delete extra[key]);
-
-  return {
-    ...plain,
-    extra,
-  };
-};
-
-const sanitizeDirectTopUpRequestForCustomer = (requestData = {}) => {
-  if (!isPlainObject(requestData)) return {};
-
-  const hiddenKeys = [
-    'price',
-    'amount',
-    'total_amount',
-    'Total Amount',
-    'totalAmount',
-    'grand_total',
-    'rounded_total',
-    'provider_cost_usd',
-    'providerUnitCostUsd',
-    'prowave_unit_cost_usd',
-  ];
-  const sanitized = { ...requestData };
-
-  hiddenKeys.forEach((key) => delete sanitized[key]);
-  return sanitized;
-};
-
-const sanitizeTransactionForCustomer = (transaction) => {
-  const plain = typeof transaction?.toObject === 'function' ? transaction.toObject() : transaction;
-
-  if (!isPlainObject(plain)) return plain;
-
-  const sanitized = { ...plain };
-  CUSTOMER_HIDDEN_TRANSACTION_KEYS.forEach((key) => delete sanitized[key]);
-  return sanitized;
-};
-
-const buildPurchaseResultData = ({
-  purchaseData,
-  invoiceName,
-  digitalCodes,
-  payment,
-  amountToDeduct,
-  reservedUser,
-  proWaveResponseData,
-  codesResponseData,
-  proWaveMessage,
-  warning,
-}) => ({
-  prowave_message: proWaveMessage,
-  sales_invoice: invoiceName,
-  invoice_name: invoiceName,
-  digital_codes: digitalCodes,
-  payment_id: payment?._id,
-  paynet_currency: PAYNET_CURRENCY,
-  paynet_amount_syp: amountToDeduct,
-  newBalance: reservedUser?.balance,
-  payment: sanitizePaymentForCustomer(payment),
-  warning,
-});
-
-const getDirectTopUpRequestPayload = (responseData) => {
-  const payload = getProWavePayload(responseData);
-  const request = getFirstPresent(
-    payload?.request,
-    payload?.direct_topup_request,
-    payload?.topup_request,
-    payload
-  );
-
-  return isPlainObject(request) ? request : {};
-};
-
-const getDirectTopUpRequestName = (requestData = {}) =>
-  getFirstPresent(requestData.name, requestData.request_name, requestData.requestName, requestData.id);
-
-const getDirectTopUpRechargeStatus = (requestData = {}) =>
-  getFirstPresent(
-    requestData.recharge_status,
-    requestData.rechargeStatus,
-    requestData.status,
-    requestData.request_status
-  );
-
-const getDirectTopUpRejectionReason = (requestData = {}) =>
-  getFirstPresent(
-    requestData.rejection_reason,
-    requestData.rejectionReason,
-    requestData.failure_reason,
-    requestData.message
-  );
-
-const normalizeStatusText = (value) =>
-  String(value || '').trim().toLowerCase().replace(/[_-]+/g, ' ');
-
-const isDirectTopUpCompletedStatus = (status) => {
-  const normalized = normalizeStatusText(status);
-  if (!normalized) return false;
-
-  return ['completed', 'complete', 'success', 'successful', 'done', 'paid'].some((value) =>
-    normalized.includes(value)
-  );
-};
-
-const isDirectTopUpFailedStatus = (status) => {
-  const normalized = normalizeStatusText(status);
-  if (!normalized) return false;
-
-  return ['rejected', 'reject', 'failed', 'failure', 'canceled', 'cancelled', 'cancel', 'declined'].some((value) =>
-    normalized.includes(value)
-  );
-};
-
-const isDirectTopUpCompletedResult = ({ rechargeStatus, invoiceName }) =>
-  !isDirectTopUpFailedStatus(rechargeStatus) &&
-  (isDirectTopUpCompletedStatus(rechargeStatus) || Boolean(invoiceName));
-
-const getDirectTopUpProviderPriceUsd = (requestData = {}) =>
-  toPositiveNumber(
-    requestData.price,
-    requestData.amount,
-    requestData.total_amount,
-    requestData.totalAmount,
-    requestData.grand_total
-  );
-
 const getDirectTopUpProviderItemCode = (item = {}) =>
   getFirstPresent(item.provider_item_code, item.providerItemCode);
 
@@ -767,8 +352,8 @@ const calculateDirectTopUpPayNetPricing = (item, exchangeRateConfig) =>
     exchangeRateConfig,
   });
 
-const enrichDirectTopUpItemWithPayNetPricing = (item, exchangeRateConfig) => {
-  const pricing = calculateDirectTopUpPayNetPricing(item, exchangeRateConfig);
+const enrichDirectTopUpItemWithPayNetPricing = (item, exchangeRateConfig, configuredPricing) => {
+  const pricing = configuredPricing || calculateDirectTopUpPayNetPricing(item, exchangeRateConfig);
   const itemCode = getDirectTopUpSubmissionCode(item);
   const providerItemCode = getDirectTopUpProviderItemCode(item);
   const legacyRechargeCategory = getDirectTopUpLegacyCategory(item);
@@ -789,6 +374,7 @@ const enrichDirectTopUpItemWithPayNetPricing = (item, exchangeRateConfig) => {
     discount_percent: 0,
     formatted_discount_percent: 0,
     provider_cost_usd: undefined,
+    provider_catalog_item: undefined,
     raw: undefined,
     paynet_currency: PAYNET_CURRENCY,
     price_syp: pricing.unitAmountSyp,
@@ -804,313 +390,6 @@ const enrichDirectTopUpItemWithPayNetPricing = (item, exchangeRateConfig) => {
     operation_type: DIRECT_TOPUP_OPERATION,
     provider: PROWAVE_PROVIDER,
   };
-};
-
-const buildDirectTopUpResultData = ({
-  requestData,
-  payment,
-  amountToDeduct,
-  reservedUser,
-  proWaveResponseData,
-  proWaveMessage,
-  warning,
-  duplicate,
-}) => {
-  const requestName = getDirectTopUpRequestName(requestData);
-  const rechargeStatus = getDirectTopUpRechargeStatus(requestData);
-  const customerRequestData = sanitizeDirectTopUpRequestForCustomer(requestData);
-
-  return {
-    ...customerRequestData,
-    request: customerRequestData,
-    name: requestName,
-    request_name: requestName,
-    recharge_status: rechargeStatus,
-    rejection_reason: getDirectTopUpRejectionReason(requestData),
-    prowave_message: proWaveMessage,
-    payment_status: payment?.status,
-    customer_status: payment?.status,
-    payment_id: payment?._id,
-    paynet_currency: PAYNET_CURRENCY,
-    paynet_amount_syp: amountToDeduct,
-    newBalance: reservedUser?.balance,
-    payment: sanitizePaymentForCustomer(payment),
-    warning,
-    duplicate,
-  };
-};
-
-const buildDirectTopUpRequestDataFromTransaction = (transaction = {}) => ({
-  name: transaction.prowaveRequestName,
-  request_name: transaction.prowaveRequestName,
-  recharge_status: transaction.rechargeStatus,
-  rejection_reason: transaction.rejectionReason,
-  sales_invoice: transaction.prowaveInvoice,
-  game: transaction.game,
-  player_id: transaction.playerId,
-  recharge_category: transaction.rechargeCategory,
-});
-
-const updateDirectTopUpTransaction = async (
-  transactionId,
-  {
-    requestData,
-    responseData,
-    providerBalanceBeforeResponse,
-    providerBalanceAfterResponse,
-    invoiceProviderDebitUsd,
-    ledgerStatus = 'pending',
-    failureStage,
-    failureReason,
-    refunded = false,
-    paynetRefundedSyp,
-  } = {}
-) => {
-  if (!transactionId) return null;
-
-  const prowaveInvoice = getInvoiceName(requestData, responseData);
-  const requestUpdate = {
-    prowaveRequestName: getDirectTopUpRequestName(requestData),
-    rechargeStatus: getDirectTopUpRechargeStatus(requestData),
-    rejectionReason: getDirectTopUpRejectionReason(requestData),
-    prowaveInvoice,
-    rawProviderBalanceBefore: providerBalanceBeforeResponse,
-    rawProviderBalanceAfter: providerBalanceAfterResponse,
-    rawPurchaseResponse: responseData,
-    rawDirectTopupStatusResponse: responseData,
-  };
-
-  await ProWaveTransaction.findByIdAndUpdate(transactionId, requestUpdate);
-
-  if (ledgerStatus === 'completed') {
-    return markCompletedTransaction(transactionId, {
-      prowaveInvoice,
-      providerBalanceBeforeResponse,
-      providerBalanceAfterResponse,
-      purchaseResponse: responseData,
-      codesResponse: null,
-      invoiceProviderDebitUsd,
-    });
-  }
-
-  if (ledgerStatus === 'failed' || ledgerStatus === 'refunded') {
-    return markFailedTransaction(transactionId, {
-      failureStage,
-      failureReason,
-      error: responseData,
-      refunded: refunded || ledgerStatus === 'refunded',
-      paynetRefundedSyp,
-    });
-  }
-
-  return ProWaveTransaction.findById(transactionId);
-};
-
-const refundPayNetBalanceForDirectTopUp = async (transaction) => {
-  const transactionId = transaction?._id || transaction;
-  const amountToRefund = Number(transaction?.paynetAmountSyp || 0);
-
-  if (!transactionId || !transaction?.user || amountToRefund <= 0) {
-    return {
-      refunded: false,
-      user: null,
-      transaction: transactionId ? await ProWaveTransaction.findById(transactionId) : null,
-    };
-  }
-
-  const lockedTransaction = await ProWaveTransaction.findOneAndUpdate(
-    {
-      _id: transactionId,
-      operationType: DIRECT_TOPUP_OPERATION,
-      $or: [
-        { paynetRefundedAt: { $exists: false } },
-        { paynetRefundedAt: null },
-      ],
-    },
-    {
-      $set: {
-        paynetRefundedAt: new Date(),
-        paynetRefundedSyp: amountToRefund,
-      },
-    },
-    { new: true }
-  );
-
-  if (!lockedTransaction) {
-    return {
-      refunded: false,
-      user: null,
-      transaction: await ProWaveTransaction.findById(transactionId),
-    };
-  }
-
-  const refreshedUser = await User.findByIdAndUpdate(
-    transaction.user,
-    { $inc: { balance: amountToRefund } },
-    { new: true }
-  );
-
-  return {
-    refunded: true,
-    user: refreshedUser,
-    transaction: lockedTransaction,
-  };
-};
-
-const hasPayNetRefund = (transaction, payment) =>
-  Boolean(
-    transaction?.paynetRefundedAt ||
-      transaction?.paynetRefundedSyp ||
-      payment?.extra?.paynet_refunded_syp
-  );
-
-const refreshDirectTopUpTransactionStatus = async (transaction) => {
-  const requestName = transaction?.prowaveRequestName;
-
-  if (!transaction || !requestName) {
-    const error = new Error('Direct top-up request name is missing');
-    error.status = 400;
-    throw error;
-  }
-
-  const payment = transaction.payment
-    ? await Payment.findById(transaction.payment)
-    : null;
-  const originalPayment = payment?.toObject?.();
-
-  const response = await postToProWave('/get_direct_topup_request', {
-    name: requestName,
-  });
-  const responseData = response.data;
-
-  if (!isProWaveSuccess(responseData)) {
-    const error = new Error(
-      getProWaveMessage(responseData, 'Failed to get ProWave direct top-up request result')
-    );
-    error.status = 502;
-    error.responseData = responseData;
-    error.stage = 'direct_topup_result';
-    throw error;
-  }
-
-  const requestData = getDirectTopUpRequestPayload(responseData);
-  const latestRequestName = getDirectTopUpRequestName(requestData) || requestName;
-  const rechargeStatus = getDirectTopUpRechargeStatus(requestData);
-  const rejectionReason = getDirectTopUpRejectionReason(requestData);
-  const invoiceName = getInvoiceName(requestData, responseData);
-  const invoiceAmountUsd =
-    getDirectTopUpProviderPriceUsd(requestData) || getInvoiceAmountUsd(requestData);
-  const isFailed = isDirectTopUpFailedStatus(rechargeStatus);
-  const isCompleted = isDirectTopUpCompletedResult({ rechargeStatus, invoiceName });
-  let refundResult = {
-    refunded: false,
-    user: null,
-    transaction,
-  };
-
-  if (isFailed) {
-    refundResult = await refundPayNetBalanceForDirectTopUp(transaction);
-  }
-
-  const refundState =
-    refundResult.refunded ||
-    hasPayNetRefund(refundResult.transaction, payment) ||
-    hasPayNetRefund(transaction, payment);
-  const refundedSyp =
-    refundResult.transaction?.paynetRefundedSyp ||
-    transaction.paynetRefundedSyp ||
-    payment?.extra?.paynet_refunded_syp ||
-    (refundState ? transaction.paynetAmountSyp : undefined);
-
-  if (payment) {
-    payment.status = isCompleted ? COMPLETED_STATUS : isFailed ? FAILED_STATUS : DIRECT_TOPUP_PENDING_STATUS;
-    payment.note = isFailed
-      ? rejectionReason || 'ProWave direct top-up request was rejected'
-      : isCompleted
-        ? ''
-        : 'Awaiting ProWave direct top-up result';
-    payment.extra = {
-      ...payment.extra,
-      prowave_request_name: latestRequestName,
-      name: latestRequestName,
-      recharge_status: rechargeStatus,
-      rejection_reason: rejectionReason,
-      sales_invoice: invoiceName,
-      prowave_sales_invoice: invoiceName,
-      prowave_total_amount_usd: invoiceAmountUsd,
-      prowave_result_response: responseData,
-      prowave_direct_topup_request: requestData,
-      paynet_refunded_syp: refundState ? refundedSyp : payment.extra?.paynet_refunded_syp,
-      completed_at: isCompleted
-        ? payment.extra?.completed_at || new Date().toISOString()
-        : payment.extra?.completed_at,
-      failed_at: isFailed
-        ? payment.extra?.failed_at || new Date().toISOString()
-        : payment.extra?.failed_at,
-    };
-    await payment.save();
-
-    if (originalPayment && originalPayment.status !== payment.status) {
-      await recordPaymentStats(originalPayment, -1);
-      await recordPaymentStats(payment, 1);
-    }
-  }
-
-  const updatedTransaction = await updateDirectTopUpTransaction(transaction._id, {
-    requestData,
-    responseData,
-    invoiceProviderDebitUsd: invoiceAmountUsd,
-    ledgerStatus: isCompleted
-      ? 'completed'
-      : isFailed
-        ? refundState
-          ? 'refunded'
-          : 'failed'
-        : 'pending',
-    failureStage: isFailed ? 'prowave_direct_topup' : undefined,
-    failureReason: isFailed ? rejectionReason || 'ProWave direct top-up request was rejected' : undefined,
-    refunded: refundState,
-    paynetRefundedSyp: refundState ? refundedSyp : undefined,
-  });
-
-  return {
-    responseData,
-    requestData,
-    transaction: updatedTransaction,
-    payment,
-    refunded: refundResult.refunded,
-    refreshedUser: refundResult.user,
-  };
-};
-
-const scheduleDirectTopUpFollowUpRefresh = (transactionId) => {
-  const key = String(transactionId || '');
-  if (!key || directTopUpFollowUpRefreshes.has(key)) return;
-
-  directTopUpFollowUpRefreshes.add(key);
-
-  PROWAVE_DIRECT_TOPUP_FOLLOW_UP_REFRESH_DELAYS_MS.forEach((delayMs, index, delays) => {
-    const timer = setTimeout(async () => {
-      try {
-        const transaction = await ProWaveTransaction.findById(transactionId);
-        if (!transaction || transaction.status !== 'pending' || !transaction.prowaveRequestName) return;
-
-        await refreshDirectTopUpTransactionStatus(transaction);
-        await invalidatePaymentCache();
-      } catch (error) {
-        console.error(
-          `[ProWave] follow-up direct top-up refresh failed for ${transactionId}:`,
-          getFailureMessage(error, error.message)
-        );
-      } finally {
-        if (index === delays.length - 1) {
-          directTopUpFollowUpRefreshes.delete(key);
-        }
-      }
-    }, delayMs);
-
-    timer.unref?.();
-  });
 };
 
 const getAvailabilityState = (responseData) => {
@@ -1153,25 +432,6 @@ const getAvailabilityState = (responseData) => {
   return null;
 };
 
-const invalidatePaymentCache = async () => {
-  await cache.delByPrefix('payments:');
-  await cache.delByPrefix('report:');
-  await cache.delByPrefix('balance:');
-};
-
-const emitPendingPayments = async (req) => {
-  const io = req.app.get('io');
-  if (!io) return;
-
-  const pendingPayments = await Payment.find(ADMIN_PENDING_PAYMENT_FILTER)
-    .select(PAYMENT_FIELDS)
-    .sort({ createdAt: -1 })
-    .limit(500)
-    .lean();
-
-  io.emit('pendingPaymentsUpdate', pendingPayments);
-};
-
 const getItemsPayload = (responseData) => responseData?.message?.data || {};
 
 const getProWaveItems = async (queryArgs) => {
@@ -1185,11 +445,11 @@ const getProWaveItems = async (queryArgs) => {
 const getItemsCacheKey = ({ currency, ordered_by, sort }) =>
   JSON.stringify({ currency, ordered_by, sort });
 
-const getAllItemsFromProWave = async ({ currency, ordered_by, sort }) => {
+const getAllItemsFromProWave = async ({ currency, ordered_by, sort, forceRefresh = false }) => {
   const cacheKey = getItemsCacheKey({ currency, ordered_by, sort });
   const cached = itemsCache.get(cacheKey);
 
-  if (cached && cached.expiresAt > Date.now()) {
+  if (!forceRefresh && cached && cached.expiresAt > Date.now()) {
     return cached.data;
   }
 
@@ -1308,11 +568,12 @@ const getItemTitle = (item) =>
     item?.item_code
   );
 
-const findProWaveItemByCode = async ({ item_code, currency }) => {
+const findProWaveItemByCode = async ({ item_code, currency, forceRefresh = false }) => {
   const allItemsData = await getAllItemsFromProWave({
     currency,
     ordered_by: 'price',
     sort: 'ASC',
+    forceRefresh,
   });
 
   return allItemsData.items.find((item) => item.item_code === item_code);
@@ -1324,7 +585,7 @@ const normalizeLookupText = (value) =>
 const getDirectTopUpProviderGroup = (game) =>
   DIRECT_TOPUP_ITEM_GROUP_BY_GAME[normalizeDirectTopUpGame(game)] || '';
 
-const getProviderItemsForDirectTopUpGame = async ({ game, currency }) => {
+const getProviderItemsForDirectTopUpGame = async ({ game, currency, forceRefresh = false }) => {
   const itemGroup = getDirectTopUpProviderGroup(game);
 
   if (!itemGroup) return [];
@@ -1333,6 +594,7 @@ const getProviderItemsForDirectTopUpGame = async ({ game, currency }) => {
     currency,
     ordered_by: 'price',
     sort: 'ASC',
+    forceRefresh,
   });
 
   return allItemsData.items.filter(
@@ -1513,9 +775,9 @@ const hydrateDirectTopUpCatalogItemFromProvider = (catalogItem, providerItem) =>
       catalogItem.title_ar || providerItem?.custom_item_name_ar || catalogItem.custom_item_name_ar,
     custom_item_group_name_ar:
       providerItem?.custom_item_group_name_ar || catalogItem.custom_item_group_name_ar,
-    price_usd: catalogItem.price_usd || providerSalePriceUsd,
-    sale_price_usd: catalogItem.sale_price_usd || providerSalePriceUsd,
-    provider_cost_usd: catalogItem.provider_cost_usd || providerCostUsd,
+    price_usd: Math.max(catalogItem.price_usd || providerSalePriceUsd, providerCostUsd),
+    sale_price_usd: Math.max(catalogItem.sale_price_usd || providerSalePriceUsd, providerCostUsd),
+    provider_cost_usd: providerCostUsd || catalogItem.provider_cost_usd,
     provider_catalog_item: providerItem || catalogItem.provider_catalog_item,
     item_code_source: providerItem
       ? 'prowave_get_items'
@@ -1533,7 +795,7 @@ const directTopUpItemMatchesRequest = (item, requestedValue) => {
   return getDirectTopUpCatalogMatchTexts(item).includes(normalizedRequest);
 };
 
-const getResolvedDirectTopUpCatalogItems = async ({ game, currency } = {}) => {
+const getResolvedDirectTopUpCatalogItems = async ({ game, currency, requireFresh = false } = {}) => {
   const normalizedGame = game ? normalizeDirectTopUpGame(game) : '';
   const baseItems = listDirectTopUpCatalog({ game: normalizedGame });
   const providerGroup = getDirectTopUpProviderGroup(normalizedGame);
@@ -1544,8 +806,10 @@ const getResolvedDirectTopUpCatalogItems = async ({ game, currency } = {}) => {
       providerItems = await getProviderItemsForDirectTopUpGame({
         game: normalizedGame,
         currency,
+        forceRefresh: requireFresh,
       });
     } catch (error) {
+      if (requireFresh) throw error;
       console.error(
         `[ProWave] failed to resolve direct top-up item codes for ${normalizedGame}:`,
         getFailureMessage(error, 'Failed to fetch ProWave items')
@@ -1621,8 +885,8 @@ const calculatePayNetAmountSyp = (item, qty, exchangeRateConfig) => {
   });
 };
 
-const enrichItemWithPayNetPricing = (item, exchangeRateConfig) => {
-  const pricing = calculatePayNetAmountSyp(item, 1, exchangeRateConfig);
+const enrichItemWithPayNetPricing = (item, exchangeRateConfig, configuredPricing) => {
+  const pricing = configuredPricing || calculatePayNetAmountSyp(item, 1, exchangeRateConfig);
 
   if (!pricing) {
     return {
@@ -1681,7 +945,7 @@ const enrichItemWithPayNetPricing = (item, exchangeRateConfig) => {
   };
 };
 
-const enrichItemsResponseWithPayNetPricing = (responseData, exchangeRateConfig) => {
+const enrichItemsResponseWithPayNetPricing = async (responseData, exchangeRateConfig) => {
   const payload = getItemsPayload(responseData);
 
   if (!Array.isArray(payload.items)) return responseData;
@@ -1700,9 +964,7 @@ const enrichItemsResponseWithPayNetPricing = (responseData, exchangeRateConfig) 
           source: exchangeRateConfig.source,
           updated_at: exchangeRateConfig.updatedAt,
         },
-        items: payload.items.map((item) =>
-          enrichItemWithPayNetPricing(item, exchangeRateConfig)
-        ),
+        items: await pricePublicCatalogItems(payload.items, exchangeRateConfig, 'digital_card'),
       },
     },
   };
@@ -1952,67 +1214,7 @@ const buildQuotePricing = (quote) => {
   };
 };
 
-const getValidQuotePricing = async ({
-  quoteId,
-  userId,
-  item_code,
-  currency,
-  qty,
-  pricedItem,
-}) => {
-  if (!quoteId) return null;
 
-  if (!mongoose.Types.ObjectId.isValid(quoteId)) {
-    const error = new Error('معرف عرض السعر غير صالح');
-    error.status = 400;
-    throw error;
-  }
-
-  const quote = await ProWavePriceQuote.findOneAndUpdate(
-    {
-      _id: quoteId,
-      user: userId,
-      itemCode: item_code,
-      usedAt: { $exists: false },
-      expiresAt: { $gt: new Date() },
-    },
-    { $set: { usedAt: new Date() } },
-    { new: true }
-  );
-
-  if (!quote) {
-    const error = new Error('عرض السعر غير موجود أو منتهي الصلاحية أو تم استخدامه سابقا');
-    error.status = 400;
-    throw error;
-  }
-
-  if (quote.currency !== currency || quote.qty !== qty) {
-    const error = new Error('عرض السعر لا يطابق طلب الشراء الحالي');
-    error.status = 400;
-    throw error;
-  }
-
-  const currentUnitPriceUsd = getItemSalePriceUsd(pricedItem);
-  const currentProviderUnitCostUsd = getItemProviderCostUsd(pricedItem);
-  const quoteProviderUnitCostUsd = quote.providerUnitCostUsd || quote.unitPriceUsd;
-
-  if (Math.abs(currentUnitPriceUsd - quote.unitPriceUsd) > 0.000001) {
-    const error = new Error('تغير سعر المنتج من ProWave، يرجى تحديث المنتج والمحاولة مجددا');
-    error.status = 409;
-    throw error;
-  }
-
-  if (Math.abs(currentProviderUnitCostUsd - quoteProviderUnitCostUsd) > 0.000001) {
-    const error = new Error('ProWave provider cost changed, please refresh the product and try again');
-    error.status = 409;
-    throw error;
-  }
-
-  return {
-    quote,
-    pricing: buildQuotePricing(quote),
-  };
-};
 
 const buildFilteredItemsResponse = ({
   responseData,
@@ -2102,7 +1304,7 @@ exports.getItems = async (req, res) => {
       });
     }
 
-    sendSuccess(res, enrichItemsResponseWithPayNetPricing(responseData, exchangeRateConfig));
+    sendSuccess(res, await enrichItemsResponseWithPayNetPricing(responseData, exchangeRateConfig));
   } catch (error) {
     sendError(res, error, 'Failed to get ProWave items');
   }
@@ -2150,14 +1352,19 @@ exports.getAdminPriceReport = async (req, res) => {
       }),
     ]);
 
-    const rows = allItemsData.items.map((item) =>
-      buildAdminPriceRow({
-        item,
-        currency,
-        exchangeRateConfig,
-        fetchedAt,
-      })
-    );
+    const configs = await proWaveProducts.listConfigs();
+    const rows = allItemsData.items.map((item) => {
+      const config = configs.find((entry) => entry.itemCode === item.item_code && entry.operationType === 'digital_card');
+      const row = buildAdminPriceRow({ item, currency, exchangeRateConfig, fetchedAt });
+      const base = calculatePayNetAmountSyp(item, 1, exchangeRateConfig);
+      try {
+        const pricing = proWaveProducts.applyPricing(base, { ...config, purchaseEnabled: true });
+        row.sale_price_syp = pricing.unitAmountSyp; row.profit_syp = pricing.unitAmountSyp - row.provider_cost_syp;
+        row.formatted_sale_price_syp = formatSypAmount(pricing.unitAmountSyp);
+        row.formatted_profit_syp = formatSypAmount(row.profit_syp);
+      } catch { row.pricing_needs_review = true; }
+      return { ...row, operation_type: 'digital_card', purchaseEnabled: config?.purchaseEnabled !== false, config: config || null };
+    });
     const filteredRows = filterAdminPriceRows({
       rows,
       itemGroup: item_group,
@@ -2241,8 +1448,10 @@ exports.createQuote = async (req, res) => {
       });
     }
 
-    const qty = toPositiveInteger(getFirstPresent(req.body.qty, req.body.quantity), 1);
-    const pricedItem = await findProWaveItemByCode({ item_code, currency });
+    const qty = Number(getFirstPresent(req.body.qty, req.body.quantity, 1));
+    if (!Number.isSafeInteger(qty) || qty < 1 || qty > 100) return res.status(400).json({ success: false, message: 'الكمية غير صالحة' });
+    const context = await exports.getProWavePurchaseContext({ itemCode: item_code, operationType: 'digital_card', currency: String(currency).toUpperCase(), quantity: qty });
+    const pricedItem = context.item;
 
     if (!pricedItem) {
       return res.status(404).json({
@@ -2251,12 +1460,8 @@ exports.createQuote = async (req, res) => {
       });
     }
 
-    const exchangeRateConfig = await getExchangeRateConfig({
-      provider: PROWAVE_PROVIDER,
-      fromCurrency: currency,
-      toCurrency: PAYNET_CURRENCY,
-    });
-    const pricing = calculatePayNetAmountSyp(pricedItem, qty, exchangeRateConfig);
+    const exchangeRateConfig = context.exchangeRateConfig;
+    const pricing = context.pricing;
 
     if (!pricing?.totalAmountSyp) {
       return res.status(400).json({
@@ -2284,13 +1489,14 @@ exports.createQuote = async (req, res) => {
       unitAmountBeforeRoundingSyp: pricing.unitAmountBeforeRoundingSyp,
       unitAmountSyp: pricing.unitAmountSyp,
       totalAmountSyp: pricing.totalAmountSyp,
+      productConfigRevision: pricing.productConfigRevision,
       expiresAt: new Date(Date.now() + PROWAVE_QUOTE_TTL_SECONDS * 1000),
     });
 
     sendSuccess(res, {
       quote: serializePriceQuote(quote),
       pricing: serializeCustomerPricing(pricing),
-      item: enrichItemWithPayNetPricing(pricedItem, exchangeRateConfig),
+      item: (await pricePublicCatalogItems([pricedItem], exchangeRateConfig, 'digital_card'))[0],
     });
   } catch (error) {
     sendError(res, error, 'تعذر إنشاء عرض السعر');
@@ -2306,12 +1512,10 @@ exports.getDirectTopUpCatalog = async (req, res) => {
       fromCurrency: currency,
       toCurrency: PAYNET_CURRENCY,
     });
-    const items = (await getResolvedDirectTopUpCatalogItems({
+    const items = await pricePublicCatalogItems(await getResolvedDirectTopUpCatalogItems({
       game: normalizedGame,
       currency,
-    })).map((item) =>
-      enrichDirectTopUpItemWithPayNetPricing(item, exchangeRateConfig)
-    );
+    }), exchangeRateConfig, 'direct_topup');
 
     sendSuccess(res, {
       game: normalizedGame || undefined,
@@ -2370,17 +1574,10 @@ exports.getCodes = async (req, res) => {
       });
     }
 
-    const response = await getFromProWave('/get_codes', {
-      params: {
-        invoice_name: req.query.invoice_name,
-        item_code: req.query.item_code,
-      },
-      data: {
-        invoice_name: req.query.invoice_name,
-        item_code: req.query.item_code,
-      },
-    });
-    return sendSuccess(res, response.data);
+    const transaction = await ProWaveTransaction.findOne({ prowaveInvoice: String(req.query.invoice_name), itemCode: String(req.query.item_code), operationType: 'digital_card' });
+    if (!transaction) return res.status(404).json({ success: false, message: 'عملية الشراء غير موجودة' });
+    const result = await proWaveOrders.checkTransaction(transaction._id, { actorId: req.user.id, isAdmin: req.user.role === 'admin' });
+    return sendSuccess(res, { digital_codes: result.digital_codes, payment_id: result.payment_id, transaction_id: result.transaction_id, status: result.status });
   } catch (error) {
     return sendError(res, error, 'Failed to get ProWave digital codes');
   }
@@ -2418,7 +1615,7 @@ exports.getReconciliationReport = async (req, res) => {
       ...report,
       providerBalance: {
         amountUsd: extractProWaveBalanceUsd(providerBalanceResponse),
-        raw: providerBalanceResponse,
+        currency: 'USD',
       },
     });
   } catch (error) {
@@ -2426,13 +1623,27 @@ exports.getReconciliationReport = async (req, res) => {
   }
 };
 
-const runProviderInvoiceReconciliation = async ({ limit = 100, offset = 0 } = {}) => {
-  const invoicesResponse = await getFromProWave('/get_invoices', {
-    params: { limit, offset },
-    data: { limit, offset },
-  });
-
-  return reconcileTransactionsWithInvoices(invoicesResponse.data);
+let reconciliationRunning = false;
+const runProviderInvoiceReconciliation = async ({ limit = 100 } = {}) => {
+  if (reconciliationRunning) return { skipped: true };
+  reconciliationRunning = true;
+  try {
+    const pageSize = Math.min(500, Math.max(1, Math.trunc(Number(limit)) || 100));
+    const invoices = new Map();
+    let completeCoverage = false;
+    for (let offset = 0; offset < 100000; offset += pageSize) {
+      const response = await getFromProWave('/get_invoices', { params: { limit: pageSize, offset } });
+      const page = require('../services/proWaveLedger.service').extractProviderInvoices(response.data);
+      let added = 0;
+      for (const invoice of page) {
+        const name = proWaveProtocol.invoiceName(invoice) || invoice.name || invoice.id;
+        if (name && !invoices.has(String(name))) { invoices.set(String(name), invoice); added++; }
+      }
+      if (page.length < pageSize) { completeCoverage = true; break; }
+      if (!added) break; // A provider that ignores offset must not create false missing-invoice alerts.
+    }
+    return await reconcileTransactionsWithInvoices({ invoices: [...invoices.values()] }, { completeCoverage });
+  } finally { reconciliationRunning = false; }
 };
 
 exports.runReconciliation = async (req, res) => {
@@ -2452,7 +1663,7 @@ exports.runReconciliation = async (req, res) => {
 };
 
 exports.startReconciliationScheduler = () => {
-  const intervalMs = Number(process.env.PROWAVE_RECONCILIATION_INTERVAL_MS) || 0;
+  const intervalMs = process.env.PROWAVE_RECONCILIATION_INTERVAL_MS === undefined ? 5 * 60000 : Number(process.env.PROWAVE_RECONCILIATION_INTERVAL_MS);
 
   if (reconciliationSchedulerStarted || intervalMs <= 0) return;
 
@@ -2470,540 +1681,35 @@ exports.startReconciliationScheduler = () => {
   console.log(`[ProWave] reconciliation scheduler enabled every ${intervalMs}ms`);
 };
 
-const refreshPendingDirectTopUpRequests = async ({
-  limit = PROWAVE_DIRECT_TOPUP_STATUS_BATCH_LIMIT,
-} = {}) => {
-  if (directTopUpStatusRefreshRunning) {
-    return {
-      skipped: true,
-      reason: 'direct top-up status refresh is already running',
-      results: [],
-    };
-  }
-
-  directTopUpStatusRefreshRunning = true;
-
-  try {
-    const normalizedLimit = Math.min(toPositiveInteger(limit, 25), 100);
-    const transactions = await ProWaveTransaction.find({
-      operationType: DIRECT_TOPUP_OPERATION,
-      status: 'pending',
-      prowaveRequestName: { $exists: true, $ne: '' },
-    })
-      .sort({ startedAt: 1, createdAt: 1 })
-      .limit(normalizedLimit);
-    const results = [];
-
-    for (const transaction of transactions) {
-      try {
-        const result = await refreshDirectTopUpTransactionStatus(transaction);
-        results.push({
-          transaction_id: transaction._id,
-          request_name: transaction.prowaveRequestName,
-          status: result.transaction?.status,
-          recharge_status: result.transaction?.rechargeStatus,
-          refunded: result.refunded,
-        });
-      } catch (error) {
-        console.error(
-          `[ProWave] failed to refresh direct top-up request ${transaction.prowaveRequestName}:`,
-          getFailureMessage(error, error.message)
-        );
-        results.push({
-          transaction_id: transaction._id,
-          request_name: transaction.prowaveRequestName,
-          error: getFailureMessage(error, 'Failed to refresh direct top-up status'),
-        });
-      }
-    }
-
-    if (results.length) {
-      await invalidatePaymentCache();
-    }
-
-    return {
-      skipped: false,
-      count: transactions.length,
-      results,
-    };
-  } finally {
-    directTopUpStatusRefreshRunning = false;
-  }
-};
-
-exports.refreshPendingDirectTopUpRequests = refreshPendingDirectTopUpRequests;
-
+exports.refreshPendingDirectTopUpRequests = (options) => proWaveOrders.tick(options);
 exports.refreshPendingDirectTopUpRequestStatuses = async (req, res) => {
+  try { sendSuccess(res, await proWaveOrders.tick({ limit: req.body?.limit || req.query.limit })); }
+  catch (error) { sendError(res, error, 'تعذر تحديث عمليات المزوّد'); }
+};
+
+const CUSTOMER_CATALOG_KEYS = new Set(['name', 'item_code', 'item_name', 'item_group', 'web_item_name', 'custom_item_name_ar', 'custom_item_group_name_ar', 'website_image', 'image', 'description', 'short_description', 'web_long_description', 'is_stock_item', 'in_stock', 'stock_qty', 'available', 'game', 'title', 'title_ar', 'recharge_category', 'legacy_recharge_category', 'provider_item_code', 'item_code_source', 'sort_order', 'price', 'price_usd', 'prowave_price_usd', 'sale_price_usd', 'customer_sale_price_usd', 'price_without_discount', 'price_list_rate', 'web_item_price', 'standard_rate', 'rate', 'amount', 'discount_percent', 'formatted_discount_percent', 'exchange_rate', 'currency', 'formatted_price', 'old_price_syp', 'formatted_old_price', 'purchaseEnabled', 'operation_type', 'provider']);
+const customerCatalogItem = (item) => Object.fromEntries(Object.entries(item).filter(([key, value]) => (CUSTOMER_CATALOG_KEYS.has(key) || key.startsWith('paynet_') || key === 'price_syp') && (value === null || typeof value !== 'object')));
+const pricePublicCatalogItems = async (items, exchange, operationType) => {
+  const configs = await proWaveProducts.listConfigs();
+  return items.map((item) => {
+    const config = configs.find((entry) => entry.itemCode === item.item_code && entry.operationType === operationType && entry.currency === 'USD');
+    const base = operationType === 'direct_topup' ? calculateDirectTopUpPayNetPricing(item, exchange) : calculatePayNetAmountSyp(item, 1, exchange);
+    let pricing, enabled = config?.purchaseEnabled !== false;
+    try { pricing = proWaveProducts.applyPricing(base, { ...config, purchaseEnabled: true }); } catch { enabled = false; pricing = { ...base, unitAmountSyp: 0, totalAmountSyp: 0 }; }
+    const enriched = operationType === 'direct_topup' ? enrichDirectTopUpItemWithPayNetPricing(item, exchange, pricing) : enrichItemWithPayNetPricing(item, exchange, pricing);
+    return customerCatalogItem({ ...enriched, operation_type: operationType, purchaseEnabled: enabled });
+  });
+};
+exports.startDirectTopUpStatusScheduler = () => proWaveOrders.start();
+
+const purchaseWithProvider = (operationType) => async (req, res) => {
   try {
-    const limit = toNumber(req.body?.limit ?? req.query.limit, PROWAVE_DIRECT_TOPUP_STATUS_BATCH_LIMIT);
-    const result = await refreshPendingDirectTopUpRequests({ limit });
-    sendSuccess(res, result);
-  } catch (error) {
-    sendError(res, error, 'Failed to refresh pending ProWave direct top-up requests');
-  }
+    const result = await proWaveOrders.purchase(req.user.id, req.body || {}, operationType);
+    const status = ['completed', 'failed', 'refunded'].includes(result.status) ? 200 : 202;
+    return res.status(status).json({ success: true, source: 'prowave', message: result.status === 'completed' ? 'تم تنفيذ الشراء' : 'تم حفظ محاولة الشراء؛ يجري التحقق من النتيجة', data: result });
+  } catch (error) { return res.status(error.status || 500).json({ success: false, code: error.code || 'PURCHASE_ERROR', message: error.status ? error.message : 'تعذر تنفيذ الشراء؛ يمكنك استعادة المحاولة بمعرّفها' }); }
 };
-
-exports.startDirectTopUpStatusScheduler = () => {
-  const intervalMs = PROWAVE_DIRECT_TOPUP_STATUS_INTERVAL_MS;
-
-  if (directTopUpStatusSchedulerStarted || intervalMs <= 0) return;
-
-  directTopUpStatusSchedulerStarted = true;
-  const runRefresh = async () => {
-    try {
-      const result = await refreshPendingDirectTopUpRequests();
-      if (!result.skipped && result.count) {
-        console.log('[ProWave] direct top-up status refresh finished:', result);
-      }
-    } catch (error) {
-      console.error('[ProWave] direct top-up status refresh failed:', error.message);
-    }
-  };
-  const timer = setInterval(runRefresh, intervalMs);
-
-  timer.unref?.();
-  runRefresh();
-  console.log(`[ProWave] direct top-up status scheduler enabled every ${intervalMs}ms`);
-};
-
-exports.createDirectTopUpRequest = async (req, res) => {
-  let payment = null;
-  let reservedUser = null;
-  let userId = null;
-  let amountToDeduct = 0;
-  let proWaveSubmitted = false;
-  let proWaveResponseData = null;
-  let requestData = {};
-  let proWaveMessage = '';
-  let ledgerTransaction = null;
-  let providerBalanceBeforeResponse = null;
-  let providerBalanceAfterResponse = null;
-  let invoiceProviderDebitUsd = null;
-  let paynetRefunded = false;
-
-  try {
-    const {
-      game,
-      player_id,
-      playerId,
-      item_code,
-      itemCode,
-      recharge_category,
-      rechargeCategory,
-      currency = DEFAULT_PROWAVE_CURRENCY,
-      email,
-      paymentType = 'cash',
-      client_request_id,
-      clientRequestId,
-      idempotency_key,
-      idempotencyKey,
-      extra: bodyExtra,
-      ...extraFields
-    } = req.body || {};
-    const normalizedGame = normalizeDirectTopUpGame(game);
-    const normalizedPlayerId = String(player_id || playerId || '').trim();
-    const normalizedRequestedItemCode = String(
-      item_code || itemCode || recharge_category || rechargeCategory || ''
-    ).trim();
-    const clientRequestIdValue = normalizeClientRequestId(
-      getFirstPresent(client_request_id, clientRequestId, idempotency_key, idempotencyKey)
-    );
-    const missingParams = [];
-
-    if (!normalizedGame) missingParams.push('game');
-    if (!normalizedPlayerId) missingParams.push('player_id');
-    if (!normalizedRequestedItemCode) missingParams.push('item_code');
-
-    if (missingParams.length) {
-      return res.status(400).json({
-        success: false,
-        message: `${missingParams.join(', ')} is required`,
-      });
-    }
-
-    const catalogItem = await findResolvedDirectTopUpCatalogItem({
-      game: normalizedGame,
-      item_code: normalizedRequestedItemCode,
-      recharge_category: normalizedRequestedItemCode,
-      currency,
-    });
-
-    if (!catalogItem) {
-      return res.status(404).json({
-        success: false,
-        message: 'Direct top-up package is not configured on PayNet',
-      });
-    }
-
-    const providerItemCode = getDirectTopUpSubmissionCode(catalogItem);
-    const requiresProviderCode =
-      Boolean(getDirectTopUpProviderGroup(normalizedGame)) &&
-      PROWAVE_DIRECT_TOPUP_REQUIRE_PROVIDER_ITEM_CODE;
-
-    if (!providerItemCode) {
-      return res.status(404).json({
-        success: false,
-        message: 'Direct top-up package is missing an item_code',
-      });
-    }
-
-    if (requiresProviderCode && !getDirectTopUpProviderItemCode(catalogItem)) {
-      return res.status(404).json({
-        success: false,
-        message: 'Direct top-up package is missing a ProWave item_code',
-      });
-    }
-
-    const exchangeRateConfig = await getExchangeRateConfig({
-      provider: PROWAVE_PROVIDER,
-      fromCurrency: currency,
-      toCurrency: PAYNET_CURRENCY,
-    });
-    const pricing = calculateDirectTopUpPayNetPricing(catalogItem, exchangeRateConfig);
-
-    if (!pricing?.totalAmountSyp) {
-      return res.status(400).json({
-        success: false,
-        message: 'Unable to calculate direct top-up price in SYP',
-      });
-    }
-
-    userId = req.user.id;
-    amountToDeduct = pricing.totalAmountSyp;
-
-    const user = await User.findById(userId);
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'User not found',
-      });
-    }
-
-    if (clientRequestIdValue) {
-      const existingTransaction = await ProWaveTransaction.findOne({
-        user: userId,
-        operationType: DIRECT_TOPUP_OPERATION,
-        clientRequestId: clientRequestIdValue,
-      }).populate('payment');
-
-      if (existingTransaction) {
-        if (existingTransaction.status === 'pending') {
-          scheduleDirectTopUpFollowUpRefresh(existingTransaction._id);
-        }
-
-        return res.status(200).json({
-          success: true,
-          source: PROWAVE_PROVIDER,
-          message: 'Existing direct top-up request returned',
-          data: buildDirectTopUpResultData({
-            requestData: buildDirectTopUpRequestDataFromTransaction(existingTransaction),
-            payment: existingTransaction.payment,
-            amountToDeduct: existingTransaction.paynetAmountSyp,
-            reservedUser: user,
-            proWaveResponseData: existingTransaction.rawDirectTopupStatusResponse,
-            proWaveMessage: 'Existing direct top-up request returned',
-            duplicate: true,
-          }),
-        });
-      }
-    }
-
-    const itemTitle =
-      catalogItem.title_ar ||
-      catalogItem.title ||
-      catalogItem.item_name ||
-      catalogItem.legacy_recharge_category ||
-      providerItemCode;
-    const normalizedExtra = normalizeExtra(bodyExtra, extraFields);
-
-    payment = new Payment({
-      user: userId,
-      landline: normalizedPlayerId,
-      company: itemTitle,
-      speed: providerItemCode,
-      amount: amountToDeduct,
-      calculatedAmount: amountToDeduct,
-      paymentType,
-      email: email || user.email,
-      status: DIRECT_TOPUP_PENDING_STATUS,
-      note: 'Awaiting ProWave direct top-up result',
-      extra: {
-        ...normalizedExtra,
-        provider: PROWAVE_PROVIDER,
-        operation_type: DIRECT_TOPUP_OPERATION,
-        prowave_operation_type: DIRECT_TOPUP_OPERATION,
-        game: normalizedGame,
-        player_id: normalizedPlayerId,
-        recharge_category: providerItemCode,
-        item_code: providerItemCode,
-        item_name: catalogItem.item_name || catalogItem.legacy_recharge_category,
-        item_title: itemTitle,
-        qty: 1,
-        currency,
-        paynet_currency: PAYNET_CURRENCY,
-        paynet_amount_syp: amountToDeduct,
-        paynet_unit_amount_syp: pricing.unitAmountSyp,
-        paynet_sale_price_usd: pricing.saleUnitPriceUsd,
-        paynet_exchange_rate: pricing.exchangeRate,
-        paynet_margin_percent: pricing.marginPercent,
-        paynet_rounding_step: pricing.roundingStep,
-        paynet_base_unit_amount_syp: pricing.baseUnitAmountSyp,
-        paynet_unit_amount_before_rounding_syp: pricing.unitAmountBeforeRoundingSyp,
-        paynet_pricing_source: pricing.source,
-        prowave_currency: currency,
-        prowave_unit_price_usd: pricing.unitPriceUsd,
-        prowave_unit_cost_usd: pricing.providerUnitCostUsd,
-        provider_unit_cost_usd: pricing.providerUnitCostUsd,
-        prowave_provider_discount_usd: pricing.providerDiscountUsd,
-        prowave_provider_discount_percent: pricing.providerDiscountPercent,
-        prowave_catalog_item: catalogItem,
-        client_request_id: clientRequestIdValue || undefined,
-        amount_to_deduct: amountToDeduct,
-        started_at: new Date().toISOString(),
-      },
-    });
-    await payment.save();
-
-    ledgerTransaction = await createPendingTransaction({
-      payment: payment._id,
-      user: userId,
-      userEmail: email || user.email,
-      operationType: DIRECT_TOPUP_OPERATION,
-      itemCode: providerItemCode,
-      itemName: catalogItem.item_name || catalogItem.legacy_recharge_category || providerItemCode,
-      itemTitle,
-      game: normalizedGame,
-      playerId: normalizedPlayerId,
-      rechargeCategory: providerItemCode,
-      qty: 1,
-      currency,
-      paynetAmountSyp: amountToDeduct,
-      paynetUnitAmountSyp: pricing.unitAmountSyp,
-      paynetBalanceBeforeSyp: user.balance,
-      pricing,
-      clientRequestId: clientRequestIdValue || undefined,
-    });
-
-    payment.extra = {
-      ...payment.extra,
-      prowave_transaction_id: ledgerTransaction._id,
-    };
-    await payment.save();
-
-    reservedUser = await User.findOneAndUpdate(
-      { _id: userId, balance: { $gte: amountToDeduct } },
-      { $inc: { balance: -amountToDeduct } },
-      { new: true }
-    );
-
-    if (!reservedUser) {
-      payment.status = FAILED_STATUS;
-      payment.note = 'Insufficient PayNet balance';
-      payment.extra = {
-        ...payment.extra,
-        failed_at: new Date().toISOString(),
-        failure_stage: 'paynet_balance',
-      };
-      await payment.save();
-      await markFailedTransaction(ledgerTransaction?._id, {
-        failureStage: 'paynet_balance',
-        failureReason: 'Insufficient PayNet balance',
-      });
-      await invalidatePaymentCache();
-
-      return res.status(400).json({
-        success: false,
-        message: 'Insufficient balance',
-      });
-    }
-
-    await markPayNetReserved(ledgerTransaction?._id, {
-      payment: payment._id,
-      paynetBalanceAfterSyp: reservedUser.balance,
-    });
-
-    const directTopUpResponse = await withProWavePurchaseLock(async () => {
-      providerBalanceBeforeResponse = await getProWaveBalanceSnapshot();
-
-      const response = await postToProWave('/create_direct_topup_request', {
-        game: normalizedGame,
-        player_id: normalizedPlayerId,
-        recharge_category: providerItemCode,
-        currency,
-      });
-
-      providerBalanceAfterResponse = await getProWaveBalanceSnapshot();
-
-      return response;
-    });
-
-    proWaveResponseData = directTopUpResponse.data;
-    logProWaveResponse('create_direct_topup_request response', proWaveResponseData);
-
-    if (!isProWaveSuccess(proWaveResponseData)) {
-      const error = new Error(
-        getProWaveMessage(proWaveResponseData, 'Failed to create ProWave direct top-up request')
-      );
-      error.status = 502;
-      error.responseData = proWaveResponseData;
-      error.stage = 'direct_topup_request';
-      throw error;
-    }
-
-    proWaveSubmitted = true;
-    proWaveMessage = getProWaveMessage(
-      proWaveResponseData,
-      'Direct top-up request submitted successfully'
-    );
-    requestData = getDirectTopUpRequestPayload(proWaveResponseData);
-
-    const requestName = getDirectTopUpRequestName(requestData);
-    const rechargeStatus = getDirectTopUpRechargeStatus(requestData);
-    const rejectionReason = getDirectTopUpRejectionReason(requestData);
-    const invoiceName = getInvoiceName(requestData, proWaveResponseData);
-    invoiceProviderDebitUsd =
-      getDirectTopUpProviderPriceUsd(requestData) || getInvoiceAmountUsd(requestData);
-    const isFailed = isDirectTopUpFailedStatus(rechargeStatus);
-    const isCompleted = isDirectTopUpCompletedResult({ rechargeStatus, invoiceName });
-
-    if (isFailed && ledgerTransaction) {
-      const refundResult = await refundPayNetBalanceForDirectTopUp(ledgerTransaction);
-      paynetRefunded = refundResult.refunded || hasPayNetRefund(refundResult.transaction, payment);
-      reservedUser = refundResult.user || (paynetRefunded ? await User.findById(userId) : reservedUser);
-    }
-
-    payment.status = isCompleted ? COMPLETED_STATUS : isFailed ? FAILED_STATUS : DIRECT_TOPUP_PENDING_STATUS;
-    payment.note = isFailed
-      ? rejectionReason || 'ProWave direct top-up request was rejected'
-      : isCompleted
-        ? ''
-        : 'Awaiting ProWave direct top-up result';
-    payment.extra = {
-      ...payment.extra,
-      prowave_request_name: requestName,
-      name: requestName,
-      recharge_status: rechargeStatus,
-      rejection_reason: rejectionReason,
-      sales_invoice: invoiceName,
-      prowave_sales_invoice: invoiceName,
-      prowave_total_amount_usd: invoiceProviderDebitUsd,
-      prowave_message: proWaveMessage,
-      prowave_response: proWaveResponseData,
-      prowave_direct_topup_request: requestData,
-      prowave_balance_before_response: providerBalanceBeforeResponse,
-      prowave_balance_after_response: providerBalanceAfterResponse,
-      paynet_refunded_syp: paynetRefunded ? amountToDeduct : undefined,
-      completed_at: isCompleted ? new Date().toISOString() : undefined,
-      failed_at: isFailed ? new Date().toISOString() : undefined,
-    };
-    await payment.save();
-
-    const updatedLedgerTransaction = await updateDirectTopUpTransaction(ledgerTransaction?._id, {
-      requestData,
-      responseData: proWaveResponseData,
-      providerBalanceBeforeResponse,
-      providerBalanceAfterResponse,
-      invoiceProviderDebitUsd,
-      ledgerStatus: isCompleted ? 'completed' : isFailed ? (paynetRefunded ? 'refunded' : 'failed') : 'pending',
-      failureStage: isFailed ? 'prowave_direct_topup' : undefined,
-      failureReason: isFailed ? rejectionReason || 'ProWave direct top-up request was rejected' : undefined,
-      refunded: paynetRefunded,
-      paynetRefundedSyp: paynetRefunded ? amountToDeduct : undefined,
-    });
-
-    if (!isCompleted && !isFailed) {
-      scheduleDirectTopUpFollowUpRefresh(updatedLedgerTransaction?._id || ledgerTransaction?._id);
-    }
-
-    try {
-      await recordPaymentStats(payment, 1);
-      await invalidatePaymentCache();
-      await emitPendingPayments(req);
-    } catch (sideEffectError) {
-      console.error('Failed to refresh direct top-up side effects:', sideEffectError);
-    }
-
-    return res.status(200).json({
-      success: true,
-      source: PROWAVE_PROVIDER,
-      message: proWaveMessage,
-      data: buildDirectTopUpResultData({
-        requestData,
-        payment,
-        amountToDeduct,
-        reservedUser,
-        proWaveResponseData,
-        proWaveMessage,
-      }),
-    });
-  } catch (error) {
-    console.error('Failed to create ProWave direct top-up request:', error);
-    const failureMessage = getFailureMessage(
-      error,
-      'Failed to create ProWave direct top-up request'
-    );
-
-    if (!proWaveSubmitted && reservedUser && userId && amountToDeduct) {
-      try {
-        await User.findByIdAndUpdate(userId, {
-          $inc: { balance: amountToDeduct },
-        });
-        paynetRefunded = true;
-      } catch (refundError) {
-        console.error('Failed to refund PayNet balance after direct top-up error:', refundError);
-      }
-    }
-
-    if (payment && !proWaveSubmitted) {
-      try {
-        payment.status = FAILED_STATUS;
-        payment.note = failureMessage;
-        payment.extra = {
-          ...payment.extra,
-          failed_at: new Date().toISOString(),
-          failure_stage: error.stage || 'prowave_direct_topup',
-          prowave_error: error.responseData || error.response?.data || error.message,
-          prowave_balance_before_response: providerBalanceBeforeResponse,
-          prowave_balance_after_response: providerBalanceAfterResponse,
-        };
-        await payment.save();
-        await markFailedTransaction(ledgerTransaction?._id, {
-          failureStage: error.stage || 'prowave_direct_topup',
-          failureReason: failureMessage,
-          error: error.responseData || error.response?.data || error.message,
-          refunded: paynetRefunded,
-          paynetRefundedSyp: paynetRefunded ? amountToDeduct : undefined,
-          providerBalanceBeforeResponse,
-          providerBalanceAfterResponse,
-        });
-        await invalidatePaymentCache();
-        await emitPendingPayments(req);
-      } catch (paymentError) {
-        console.error('Failed to update failed ProWave direct top-up payment:', paymentError);
-      }
-    }
-
-    if (proWaveSubmitted) {
-      return res.status(200).json({
-        success: true,
-        source: PROWAVE_PROVIDER,
-        message: 'Direct top-up request was submitted, but local status update needs review',
-        data: buildDirectTopUpResultData({
-          requestData,
-          payment,
-          amountToDeduct,
-          reservedUser,
-          proWaveResponseData,
-          proWaveMessage,
-          warning: failureMessage,
-        }),
-      });
-    }
-
-    return sendError(res, error, 'Failed to create ProWave direct top-up request');
-  }
-};
+exports.createDirectTopUpRequest = purchaseWithProvider('direct_topup');
 
 exports.getDirectTopUpRequests = async (req, res) => {
   try {
@@ -3026,513 +1732,47 @@ exports.getDirectTopUpRequests = async (req, res) => {
 exports.getDirectTopUpRequestResult = async (req, res) => {
   try {
     const name = String(req.body?.name || req.query?.name || '').trim();
-
-    if (!name) {
-      return res.status(400).json({
-        success: false,
-        message: 'name is required',
-      });
-    }
-
-    const transaction = await ProWaveTransaction.findOne({
-      prowaveRequestName: name,
-      operationType: DIRECT_TOPUP_OPERATION,
-    });
-
-    if (!transaction) {
-      return res.status(404).json({
-        success: false,
-        message: 'Direct top-up request was not found locally',
-      });
-    }
-
-    const isAdmin = req.user?.role === 'admin';
-    if (!isAdmin && String(transaction.user) !== String(req.user?.id)) {
-      return res.status(403).json({
-        success: false,
-        message: 'You are not allowed to view this direct top-up request',
-      });
-    }
-
-    const {
-      requestData,
-      responseData,
-      transaction: updatedTransaction,
-      payment,
-      refreshedUser,
-    } = await refreshDirectTopUpTransactionStatus(transaction);
-
-    await invalidatePaymentCache();
-    await emitPendingPayments(req);
-
-    sendSuccess(res, {
-      request: isAdmin ? requestData : sanitizeDirectTopUpRequestForCustomer(requestData),
-      provider_response: isAdmin ? responseData : undefined,
-      transaction: isAdmin
-        ? updatedTransaction
-        : sanitizeTransactionForCustomer(updatedTransaction),
-      payment: isAdmin ? payment : sanitizePaymentForCustomer(payment),
-      newBalance: refreshedUser?.balance,
-    });
-  } catch (error) {
-    sendError(res, error, 'Failed to get ProWave direct top-up request result');
-  }
+    if (!name) return res.status(400).json({ success: false, message: 'name is required' });
+    const transaction = await ProWaveTransaction.findOne({ prowaveRequestName: name, operationType: 'direct_topup' });
+    if (!transaction) return res.status(404).json({ success: false, message: 'العملية غير موجودة' });
+    sendSuccess(res, await proWaveOrders.checkTransaction(transaction._id, { actorId: req.user.id, isAdmin: req.user.role === 'admin' }));
+  } catch (error) { res.status(error.status || 500).json({ success: false, message: error.status ? error.message : 'تعذر استعادة حالة العملية' }); }
 };
 
-exports.purchaseDigitalCard = async (req, res) => {
-  let payment = null;
-  let reservedUser = null;
-  let userId = null;
-  let amountToDeduct = 0;
-  let proWavePurchased = false;
-  let proWaveResponseData = null;
-  let purchaseData = {};
-  let digitalCodes = [];
-  let codesResponseData = null;
-  let proWaveMessage = '';
-  let priceQuote = null;
-  let ledgerTransaction = null;
-  let providerBalanceBeforeResponse = null;
-  let providerBalanceAfterResponse = null;
-  let invoiceProviderDebitUsd = null;
-  let paynetRefunded = false;
+exports.purchaseDigitalCard = purchaseWithProvider('digital_card');
 
-  try {
-    const {
-      item_code,
-      item_name,
-      item_title,
-      currency = DEFAULT_PROWAVE_CURRENCY,
-      email,
-      paymentType = 'cash',
-      customer_identifier,
-      customer_contact,
-      playerId,
-      password,
-      quote_id,
-      quoteId,
-      extra: bodyExtra,
-      ...extraFields
-    } = req.body || {};
-    const missingParams = getMissingBodyParams(req.body || {}, ['item_code']);
-
-    if (missingParams.length) {
-      return res.status(400).json({
-        success: false,
-        message: `${missingParams.join(', ')} is required`,
-      });
-    }
-
-    const qty = toPositiveInteger(getFirstPresent(req.body.qty, req.body.quantity), 1);
-    const clientAmountSyp = toPositiveNumber(
-      req.body.paynet_amount_syp,
-      req.body.amount_syp,
-      req.body.calculatedAmount,
-      req.body.calculated_amount,
-      req.body.price_syp,
-      req.body.amount
-    );
-
-    const pricedItem = await findProWaveItemByCode({ item_code, currency });
-
-    if (!pricedItem) {
-      return res.status(404).json({
-        success: false,
-        message: 'منتج ProWave غير موجود في قائمة المنتجات',
-      });
-    }
-
-    userId = req.user.id;
-    const quotePricing = await getValidQuotePricing({
-      quoteId: quote_id || quoteId,
-      userId,
-      item_code,
-      currency,
-      qty,
-      pricedItem,
-    });
-    const exchangeRateConfig = quotePricing
-      ? null
-      : await getExchangeRateConfig({
-        provider: PROWAVE_PROVIDER,
-        fromCurrency: currency,
-        toCurrency: PAYNET_CURRENCY,
-      });
-    const pricing = quotePricing
-      ? quotePricing.pricing
-      : calculatePayNetAmountSyp(pricedItem, qty, exchangeRateConfig);
-    priceQuote = quotePricing?.quote || null;
-
-    if (!pricing?.totalAmountSyp) {
-      return res.status(400).json({
-        success: false,
-        message: 'تعذر حساب سعر المنتج بالليرة السورية',
-      });
-    }
-
-    amountToDeduct = pricing.totalAmountSyp;
-
-    const user = await User.findById(userId);
-
-    if (!user) {
-      return res.status(404).json({
-        success: false,
-        message: 'المستخدم غير موجود',
-      });
-    }
-
-    const customerReference =
-      customer_contact || customer_identifier || playerId || user.number || user.email;
-    const normalizedExtra = normalizeExtra(bodyExtra, extraFields);
-
-    payment = new Payment({
-      user: userId,
-      landline: customerReference,
-      company: item_title || item_name || getItemTitle(pricedItem) || item_code,
-      speed: item_code,
-      amount: amountToDeduct,
-      calculatedAmount: amountToDeduct,
-      paymentType,
-      email: email || user.email,
-      status: STARTED_STATUS,
-      note: 'بانتظار رد ProWave',
-      extra: {
-        ...normalizedExtra,
-        provider: PROWAVE_PROVIDER,
-        item_code,
-        item_name,
-        item_title,
-        qty,
-        currency,
-        customer_identifier,
-        customer_contact,
-        playerId,
-        password,
-        paynet_currency: PAYNET_CURRENCY,
-        paynet_amount_syp: amountToDeduct,
-        paynet_unit_amount_syp: pricing.unitAmountSyp,
-        paynet_sale_price_usd: pricing.saleUnitPriceUsd,
-        paynet_exchange_rate: pricing.exchangeRate,
-        paynet_margin_percent: pricing.marginPercent,
-        paynet_rounding_step: pricing.roundingStep,
-        paynet_base_unit_amount_syp: pricing.baseUnitAmountSyp,
-        paynet_unit_amount_before_rounding_syp: pricing.unitAmountBeforeRoundingSyp,
-        paynet_pricing_source: pricing.source,
-        client_amount_syp: clientAmountSyp || undefined,
-        prowave_currency: currency,
-        prowave_unit_price_usd: pricing.unitPriceUsd,
-        prowave_unit_cost_usd: pricing.providerUnitCostUsd,
-        provider_unit_cost_usd: pricing.providerUnitCostUsd,
-        prowave_provider_discount_usd: pricing.providerDiscountUsd,
-        prowave_provider_discount_percent: pricing.providerDiscountPercent,
-        prowave_priced_item: pricedItem,
-        amount_to_deduct: amountToDeduct,
-        quote_id: priceQuote?._id,
-        quote_expires_at: priceQuote?.expiresAt,
-        immediate_code_view: true,
-        started_at: new Date().toISOString(),
-      },
-    });
-    await payment.save();
-
-    ledgerTransaction = await createPendingTransaction({
-      payment: payment._id,
-      user: userId,
-      userEmail: email || user.email,
-      itemCode: item_code,
-      itemName: item_name,
-      itemTitle: item_title || getItemTitle(pricedItem),
-      qty,
-      currency,
-      paynetAmountSyp: amountToDeduct,
-      paynetUnitAmountSyp: pricing.unitAmountSyp,
-      paynetBalanceBeforeSyp: user.balance,
-      pricing,
-      quote: priceQuote?._id,
-    });
-
-    payment.extra = {
-      ...payment.extra,
-      prowave_transaction_id: ledgerTransaction._id,
-    };
-    await payment.save();
-
-    reservedUser = await User.findOneAndUpdate(
-      { _id: userId, balance: { $gte: amountToDeduct } },
-      { $inc: { balance: -amountToDeduct } },
-      { new: true }
-    );
-
-    if (!reservedUser) {
-      payment.status = FAILED_STATUS;
-      payment.note = 'الرصيد غير كاف';
-      payment.extra = {
-        ...payment.extra,
-        failed_at: new Date().toISOString(),
-        failure_stage: 'paynet_balance',
-      };
-      await payment.save();
-      await markFailedTransaction(ledgerTransaction?._id, {
-        failureStage: 'paynet_balance',
-        failureReason: 'الرصيد غير كاف',
-      });
-      await invalidatePaymentCache();
-
-      return res.status(400).json({
-        success: false,
-        message: 'الرصيد غير كاف',
-      });
-    }
-
-    await markPayNetReserved(ledgerTransaction?._id, {
-      payment: payment._id,
-      paynetBalanceAfterSyp: reservedUser.balance,
-    });
-
-    const purchaseResponse = await withProWavePurchaseLock(async () => {
-      providerBalanceBeforeResponse = await getProWaveBalanceSnapshot();
-
-      const availabilityResponse = await getFromProWave('/check_availability', {
-        params: { item_code },
-        data: { item_code },
-      });
-      const availabilityState = getAvailabilityState(availabilityResponse.data);
-
-      if (availabilityState === false) {
-        const error = new Error(
-          getProWaveMessage(availabilityResponse.data, 'هذا المنتج غير متوفر حاليا')
-        );
-        error.status = 400;
-        error.responseData = availabilityResponse.data;
-        error.stage = 'availability';
-        throw error;
-      }
-
-      const response = await postToProWave('/purchase_digital_card', {
-        item_code,
-        qty,
-        currency,
-        immediate_code_view: true,
-      });
-
-      providerBalanceAfterResponse = await getProWaveBalanceSnapshot();
-
-      return response;
-    });
-
-    proWaveResponseData = purchaseResponse.data;
-    logProWaveResponse('purchase_digital_card response', proWaveResponseData);
-
-    if (!isProWaveSuccess(proWaveResponseData)) {
-      const error = new Error(
-        getProWaveMessage(proWaveResponseData, 'فشل شراء منتج ProWave')
-      );
-      error.status = 502;
-      error.responseData = proWaveResponseData;
-      error.stage = 'purchase';
-      throw error;
-    }
-
-    proWavePurchased = true;
-    proWaveMessage = getProWaveMessage(proWaveResponseData, 'تم شراء المنتج بنجاح');
-    purchaseData = getProWavePayload(proWaveResponseData);
-    digitalCodes = getDigitalCodes(proWaveResponseData);
-
-    const invoiceName = getInvoiceName(purchaseData, proWaveResponseData);
-    invoiceProviderDebitUsd = getInvoiceAmountUsd(purchaseData);
-
-    if (!digitalCodes.length && invoiceName) {
-      try {
-        const codesResponse = await getFromProWave('/get_codes', {
-          params: {
-            invoice_name: invoiceName,
-            item_code,
-          },
-          data: {
-            invoice_name: invoiceName,
-            item_code,
-          },
-        });
-        codesResponseData = codesResponse.data;
-        logProWaveResponse('get_codes response', codesResponseData);
-        digitalCodes = getDigitalCodes(codesResponseData);
-      } catch (codesError) {
-        codesResponseData = {
-          success: false,
-          error: codesError.response?.data || codesError.message,
-        };
-      }
-    }
-
-    payment.status = COMPLETED_STATUS;
-    payment.note = '';
-    payment.extra = {
-      ...payment.extra,
-      sales_invoice: invoiceName,
-      prowave_sales_invoice: invoiceName,
-      prowave_total_amount_usd: invoiceProviderDebitUsd || getProWaveTotalAmount(purchaseData),
-      prowave_message: proWaveMessage,
-      digital_codes: digitalCodes,
-      prowave_response: proWaveResponseData,
-      prowave_purchase_data: purchaseData,
-      prowave_codes_response: codesResponseData,
-      prowave_balance_before_response: providerBalanceBeforeResponse,
-      prowave_balance_after_response: providerBalanceAfterResponse,
-      completed_at: new Date().toISOString(),
-    };
-    await payment.save();
-
-    if (priceQuote) {
-      priceQuote.usedAt = new Date();
-      priceQuote.payment = payment._id;
-      await priceQuote.save();
-    }
-
-    try {
-      await markCompletedTransaction(ledgerTransaction?._id, {
-        prowaveInvoice: invoiceName,
-        providerBalanceBeforeResponse,
-        providerBalanceAfterResponse,
-        purchaseResponse: proWaveResponseData,
-        codesResponse: codesResponseData,
-        invoiceProviderDebitUsd,
-      });
-    } catch (ledgerError) {
-      console.error('Failed to update ProWave transaction ledger:', ledgerError);
-    }
-
-    try {
-      await recordPaymentStats(payment, 1);
-      await invalidatePaymentCache();
-      await emitPendingPayments(req);
-    } catch (sideEffectError) {
-      console.error('Failed to refresh payment side effects:', sideEffectError);
-    }
-
-    return res.status(200).json({
-      success: true,
-      source: PROWAVE_PROVIDER,
-      message: proWaveMessage || 'تم شراء المنتج بنجاح',
-      data: buildPurchaseResultData({
-        purchaseData,
-        invoiceName,
-        digitalCodes,
-        payment,
-        amountToDeduct,
-        reservedUser,
-        proWaveResponseData,
-        codesResponseData,
-        proWaveMessage,
-      }),
-    });
-  } catch (error) {
-    console.error('Failed to purchase ProWave digital card:', error);
-    const failureMessage = getFailureMessage(
-      error,
-      'Failed to purchase ProWave product'
-    );
-
-    if (!proWavePurchased && reservedUser && userId && amountToDeduct) {
-      try {
-        await User.findByIdAndUpdate(userId, {
-          $inc: { balance: amountToDeduct },
-        });
-        paynetRefunded = true;
-      } catch (refundError) {
-        console.error('Failed to refund PayNet balance after ProWave error:', refundError);
-      }
-    }
-
-    if (payment && !proWavePurchased) {
-      try {
-        payment.status = FAILED_STATUS;
-        payment.note = error.message || 'فشل شراء منتج ProWave';
-        payment.extra = {
-          ...payment.extra,
-          failed_at: new Date().toISOString(),
-          failure_stage: error.stage || 'prowave_purchase',
-          prowave_error: error.responseData || error.response?.data || error.message,
-          prowave_balance_before_response: providerBalanceBeforeResponse,
-          prowave_balance_after_response: providerBalanceAfterResponse,
-        };
-        payment.note = failureMessage;
-        await payment.save();
-        await markFailedTransaction(ledgerTransaction?._id, {
-          failureStage: error.stage || 'prowave_purchase',
-          failureReason: error.message || 'فشل شراء منتج ProWave',
-          error: error.responseData || error.response?.data || error.message,
-          failureReason: failureMessage,
-          refunded: paynetRefunded,
-          paynetRefundedSyp: paynetRefunded ? amountToDeduct : undefined,
-          providerBalanceBeforeResponse,
-          providerBalanceAfterResponse,
-        });
-        await invalidatePaymentCache();
-        await emitPendingPayments(req);
-      } catch (paymentError) {
-        console.error('Failed to update failed ProWave payment:', paymentError);
-      }
-    }
-
-    if (proWavePurchased) {
-      try {
-        await markCompletedTransaction(ledgerTransaction?._id, {
-          prowaveInvoice: getInvoiceName(purchaseData, proWaveResponseData),
-          providerBalanceBeforeResponse,
-          providerBalanceAfterResponse,
-          purchaseResponse: proWaveResponseData,
-          codesResponse: codesResponseData,
-          invoiceProviderDebitUsd:
-            invoiceProviderDebitUsd || getInvoiceAmountUsd(purchaseData),
-        });
-      } catch (ledgerError) {
-        console.error('Failed to update ProWave ledger after partial success:', ledgerError);
-      }
-
-      return res.status(200).json({
-        success: true,
-        source: PROWAVE_PROVIDER,
-        message: 'تم شراء المنتج بنجاح، لكن تعذر تحديث البيان المالي تلقائيا',
-        data: buildPurchaseResultData({
-          purchaseData,
-          invoiceName: getInvoiceName(purchaseData, proWaveResponseData),
-          digitalCodes,
-          payment,
-          amountToDeduct,
-          reservedUser,
-          proWaveResponseData,
-          codesResponseData,
-          proWaveMessage,
-          warning: failureMessage,
-        }),
-      });
-    }
-
-    return sendError(res, error, 'فشل شراء منتج ProWave');
-  }
+exports.getAttempt = async (req, res) => {
+  try { sendSuccess(res, await proWaveOrders.findAttempt(req.user.id, req.params.clientRequestId, req.query.operation_type)); }
+  catch (error) { res.status(error.status || 500).json({ success: false, message: error.status ? error.message : 'تعذر استعادة محاولة الشراء' }); }
+};
+exports.listProductConfigs = async (req, res) => {
+  try { sendSuccess(res, { configs: await proWaveProducts.listConfigs() }); }
+  catch { res.status(500).json({ success: false, message: 'تعذر تحميل إعدادات المنتجات' }); }
+};
+exports.updateProductConfig = async (req, res) => {
+  try { sendSuccess(res, await proWaveProducts.updateConfig(req.params.itemCode, req.body || {}, req.user.id)); }
+  catch (error) { res.status(error.status || 500).json({ success: false, message: error.status ? error.message : 'تعذر تحديث إعدادات المنتج' }); }
 };
 
-
-
-/*
-1. getBalance
-   للتأكد أن حسابك عند ProWave فيه رصيد.
-
-2. getCategories
-   لجلب التصنيفات وعرضها في الموقع.
-
-3. getItems
-   لجلب المنتجات حسب التصنيف والصفحة والعملة.
-
-4. checkAvailability
-   عند اختيار منتج وقبل الشراء مباشرة.
-
-5. purchase_digital_card
-   هذه ستكون POST لاحقًا لتنفيذ الشراء.
-
-6. getCodes
-   بعد الشراء لجلب الكود إذا لم يرجع مباشرة.
-
-7. getInvoices
-   للمراجعة، وسجل العمليات، ومطابقة الفواتير.
-   */
+exports.getProWavePurchaseContext = async (input) => {
+  if (input.currency !== 'USD') throw Object.assign(new Error('عملة الشراء غير مدعومة'), { status: 400, code: 'UNSUPPORTED_CURRENCY' });
+  let item;
+  if (input.operationType === 'direct_topup') {
+    if (!getDirectTopUpProviderGroup(input.game)) throw Object.assign(new Error('اللعبة غير مدعومة'), { status: 400, code: 'UNSUPPORTED_GAME' });
+    const items = await getResolvedDirectTopUpCatalogItems({ game: input.game, currency: input.currency, requireFresh: true });
+    item = items.find((entry) => directTopUpItemMatchesRequest(entry, input.itemCode) && entry.provider_catalog_item);
+  } else item = await findProWaveItemByCode({ item_code: input.itemCode, currency: input.currency, forceRefresh: true });
+  if (!item) throw Object.assign(new Error('المنتج غير متوفر في كتالوج المزوّد الحالي'), { status: 404, code: 'ITEM_NOT_FOUND' });
+  if (input.operationType === 'digital_card') {
+    const response = await getFromProWave('/check_availability', { params: { item_code: input.itemCode } });
+    if (getAvailabilityState(response.data) === false) throw Object.assign(new Error('المنتج غير متوفر حالياً'), { status: 409, code: 'ITEM_UNAVAILABLE' });
+  }
+  const exchange = await getExchangeRateConfig({ provider: 'prowave', fromCurrency: 'USD', toCurrency: 'SYP' });
+  if (exchange.isActive === false) throw Object.assign(new Error('تسعير المزوّد متوقف'), { status: 503, code: 'PRICING_DISABLED' });
+  const base = input.operationType === 'direct_topup' ? calculateDirectTopUpPayNetPricing(item, exchange) : calculatePayNetAmountSyp(item, input.quantity, exchange);
+  if (!base) throw Object.assign(new Error('تعذر التحقق من السعر الحالي'), { status: 503, code: 'PRICE_UNAVAILABLE' });
+  const itemCode = item.item_code;
+  const config = await proWaveProducts.getConfig(itemCode, input.operationType, input.currency);
+  const pricing = proWaveProducts.applyPricing(base, config);
+  return { itemCode, itemTitle: getItemTitle(item) || item.title_ar || item.title || itemCode, item, exchangeRateConfig: exchange, pricing };
+};

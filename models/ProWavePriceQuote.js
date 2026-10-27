@@ -64,6 +64,7 @@ const proWavePriceQuoteSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Payment',
   },
+  productConfigRevision: { type: Number, default: 0 },
   createdAt: {
     type: Date,
     default: Date.now,

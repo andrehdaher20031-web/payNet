@@ -1,0 +1,19 @@
+{
+  "passed": true,
+  "chatProducts": 716,
+  "categories": 5,
+  "liveReadMs": 20815,
+  "financialRequests": 0,
+  "databaseConnections": 0,
+  "checks": [
+    "desktop catalog, categories and pagination",
+    "ZNET second page",
+    "search and product details",
+    "mobile layout without horizontal overflow",
+    "admin catalog",
+    "complete catalog remains visible during a blocked refresh, then updates",
+    "provider timeout retains every cached product",
+    "cold timeout shows a clear error without automatic retry loop"
+  ],
+  "cachedDisplayMs": 852
+}

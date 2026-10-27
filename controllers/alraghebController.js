@@ -2,6 +2,7 @@ const provider = require('../services/alraghebApi');
 const catalog = require('../services/alraghebCatalog.service');
 const orders = require('../services/alraghebOrder.service');
 const pricing = require('../services/alraghebPricing.service');
+const operations = require('../services/providerOperations.service');
 
 const decorateResult = async (snapshot, result, admin = false) => {
   const list = Array.isArray(result.data) ? result.data : result.data.products;
@@ -9,7 +10,7 @@ const decorateResult = async (snapshot, result, admin = false) => {
   const decorated = await orders.decorateProducts(snapshot.products.filter((p) => ids.has(p.id)), admin, snapshot.stale, snapshot.categories);
   const values = list.map((p) => decorated.find((item) => item.id === p.id));
   if (Array.isArray(result.data)) result.data = values; else result.data.products = values;
-  result.meta.purchase_enabled = pricing.enabled() && pricing.moneyReady();
+  result.meta.purchase_enabled = pricing.enabled() && pricing.moneyReady() && (await operations.getSettings('alragheb')).purchaseEnabled;
   result.meta.currency = 'SYP';
   result.meta.rounding_policy = pricing.ROUNDING_POLICY;
   return result;
@@ -42,7 +43,7 @@ exports.getProfile = handler(async () => {
 
 exports.getProducts = handler(async (req) => {
   catalog.parseQuery(req.query);
-  const snapshot = await catalog.getCatalog();
+  const snapshot = await catalog.getCatalog({ background: true });
   return decorateResult(snapshot, catalog.selectProducts(snapshot, req.query));
 });
 
@@ -50,25 +51,25 @@ exports.getContent = handler(async (req) => {
   const id = catalog.integer(req.params.categoryId);
   if (!id) throw provider.alraghebError('INVALID_CATEGORY', 'معرّف التصنيف غير صالح', 400);
   catalog.parseQuery(req.query);
-  const snapshot = await catalog.getCatalog();
+  const snapshot = await catalog.getCatalog({ background: true });
   return decorateResult(snapshot, catalog.selectContent(snapshot, id, req.query));
 });
 
 exports.getProduct = handler(async (req) => {
   const id = catalog.integer(req.params.productId);
   if (!id) throw provider.alraghebError('INVALID_PRODUCT', 'معرّف المنتج غير صالح', 400);
-  const snapshot = await catalog.getCatalog();
+  const snapshot = await catalog.getCatalog({ background: true });
   const product = snapshot.products.find((item) => item.id === id);
   if (!product) throw provider.alraghebError('PRODUCT_NOT_FOUND', 'المنتج غير موجود ضمن تطبيقات الدردشة', 404);
   return {
     data: (await orders.decorateProducts([product], false, snapshot.stale))[0],
-    meta: { synced_at: snapshot.synced_at, stale: Boolean(snapshot.stale), purchase_enabled: pricing.enabled() && pricing.moneyReady() },
+    meta: { synced_at: snapshot.synced_at, stale: Boolean(snapshot.stale), refreshing: Boolean(snapshot.refreshing), purchase_enabled: pricing.enabled() && pricing.moneyReady() && (await operations.getSettings('alragheb')).purchaseEnabled },
   };
 });
 
 exports.getAdminProducts = handler(async (req) => {
   catalog.parseQuery(req.query);
-  const snapshot = await catalog.getCatalog();
+  const snapshot = await catalog.getCatalog({ background: true });
   const result = catalog.selectProducts(snapshot, req.query, { admin: true });
   result.meta.categories = snapshot.categories.map((category) => catalog.categorySummary(snapshot, category));
   return decorateResult(snapshot, result, true);
@@ -89,7 +90,7 @@ const purchaseHandler = (action) => async (req, res) => {
   res.set('Cache-Control', 'private, no-store');
   try {
     const result = await action(req);
-    res.status(result.data?.status === 'pending' ? 202 : 200).json({ success: true, source: 'alragheb', ...result });
+    res.status(['pending', 'unknown', 'manual_review'].includes(result.data?.status) ? 202 : 200).json({ success: true, source: 'alragheb', ...result });
   } catch (error) { sendError(res, error); }
 };
 exports.quote = purchaseHandler(async (req) => ({ data: await orders.createQuote(req.user.id, req.body || {}) }));
@@ -104,10 +105,12 @@ exports.savePricingRule = purchaseHandler(async (req) => ({ data: await orders.s
 exports.adminOrderList = purchaseHandler((req) => orders.listOrders(req.user.id, req.query, true));
 exports.summary = purchaseHandler(async () => ({ data: await orders.summary() }));
 exports.checkOrder = purchaseHandler(async (req) => {
-  const order = await orders.getOrder(req.user.id, req.params.id, true);
-  if (order.next_check_at && Date.parse(order.next_check_at) > Date.now()) throw provider.alraghebError('CHECK_COOLDOWN', 'يرجى انتظار موعد التحقق التالي', 429);
-  await orders.processOrder(req.params.id);
-  return { data: await orders.getOrder(req.user.id, req.params.id, true) };
+  return { data: await orders.checkTransaction(req.params.id, { actorId: req.user.id, isAdmin: true }) };
+});
+exports.ruleHistory = purchaseHandler(async (req) => {
+  const id = catalog.integer(req.params.categoryId);
+  if (!id) throw provider.alraghebError('INVALID_CATEGORY', 'معرّف التصنيف غير صالح', 400);
+  return { data: await require('../models/AlraghebPricingRuleAudit').find({ categoryId: id }).sort({ createdAt: -1 }).limit(50).populate('actor', 'name email').lean() };
 });
 exports.configHistory = purchaseHandler(async (req) => {
   const id = catalog.integer(req.params.productId);

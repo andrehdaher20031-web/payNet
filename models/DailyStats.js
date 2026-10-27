@@ -33,6 +33,5 @@ const dailyStatsSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
-dailyStatsSchema.index({ day: 1 }, { unique: true });
 
 module.exports = mongoose.model('DailyStats', dailyStatsSchema);

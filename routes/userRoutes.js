@@ -34,7 +34,7 @@ router.get('/daen', authMiddleware, async (req, res) => {
 
 })
 
-router.post("/", async (req, res) => {
+router.post("/", authMiddleware, require('../middleware/requireAdmin'), async (req, res) => {
   try {
     const { name, email, number, password, balance, role, card } = req.body;
 
@@ -43,8 +43,6 @@ router.post("/", async (req, res) => {
     if (existingUser) {
       return res.status(400).json({ message: "المستخدم موجود مسبقاً" });
     }
-
-    // تشفير كلمة المرور
 
     const newUser = new User({
       name,
@@ -65,13 +63,11 @@ router.post("/", async (req, res) => {
 
 router.get("/get-user-by-email", authMiddleware, async (req, res) => {
   try {
-    console.log(req.query);
-    const email = req.query.email;
+    const email = req.user.role === 'admin' && typeof req.query.email === 'string' ? req.query.email : req.user.email;
     const user = await User.findOne({ email }).select('card').lean();
     if (!user) {
       return res.status(404).json({ message: "المستخدم غير موجود" });
     }
-    console.log(user.card);
     res.json({ cardKey: user.card });
   }
   catch (err) {

@@ -1,752 +1,121 @@
-const ProWaveTransaction = require('../models/ProWaveTransaction');
-const { findDirectTopUpCatalogItem } = require('../config/prowaveDirectTopupCatalog');
-
-const PROVIDER_DEBIT_TOLERANCE_USD =
-  Number(process.env.PROWAVE_PROVIDER_DEBIT_TOLERANCE_USD) || 0.01;
-const DIRECT_TOPUP_PROVIDER_DEBIT_TOLERANCE_USD =
-  Number(process.env.PROWAVE_DIRECT_TOPUP_DEBIT_TOLERANCE_USD) || 0.1;
-const DIRECT_TOPUP_PROVIDER_DEBIT_TOLERANCE_PERCENT =
-  Number(process.env.PROWAVE_DIRECT_TOPUP_DEBIT_TOLERANCE_PERCENT) || 5;
-const PROWAVE_INVOICE_MISSING_GRACE_MS =
-  Number(process.env.PROWAVE_INVOICE_MISSING_GRACE_MS) || 30 * 60 * 1000;
-const DIRECT_TOPUP_OPERATION = 'direct_topup';
-
-const toNumber = (value, fallback = null) => {
-  const normalized =
-    typeof value === 'string'
-      ? value.replace(/[^0-9.+-]/g, '')
-      : value;
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : fallback;
-};
-
-const toRoundedNumber = (value, digits = 4) => {
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) return null;
-  return Number(parsed.toFixed(digits));
-};
-
-const isPlainObject = (value) =>
-  Boolean(value) && typeof value === 'object' && !Array.isArray(value);
-
-const getNestedPayload = (responseData) => {
-  const candidates = [
-    responseData?.message?.data,
-    responseData?.data?.message?.data,
-    responseData?.data?.data,
-    responseData?.data,
-    isPlainObject(responseData?.message) ? responseData.message : undefined,
-    responseData,
-  ];
-
-  return candidates.find((value) => value !== undefined && value !== null) || {};
-};
-
-const normalizeKey = (key) => String(key || '').toLowerCase().replace(/[^a-z0-9]/g, '');
-
-const balanceKeyScore = (key) => {
-  const normalized = normalizeKey(key);
-  if (!normalized.includes('balance')) return 0;
-  if (normalized.includes('available')) return 4;
-  if (normalized.includes('current')) return 3;
-  if (normalized === 'balance') return 2;
-  return 1;
-};
-
-const extractNumberByKey = (value, scorer, depth = 0) => {
-  if (depth > 6 || value === null || value === undefined) return null;
-
-  if (typeof value !== 'object') return null;
-
-  let best = null;
-
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      const nested = extractNumberByKey(item, scorer, depth + 1);
-      if (nested && (!best || nested.score > best.score)) best = nested;
-    }
-    return best;
+const Transaction = require('../models/ProWaveTransaction');
+const protocol = require('./proWaveProtocol.service');
+const { Decimal } = protocol;
+const graceMs = Number(process.env.PROWAVE_INVOICE_MISSING_GRACE_MS) || 30 * 60000;
+const round = (value) => new Decimal(value).toDecimalPlaces(4).toNumber();
+function extractProWaveBalanceUsd(response) {
+  const value = protocol.payload(response);
+  if (value?.success === false || response?.success === false) return null;
+  const keys = ['available_balance', 'available_balance_usd', 'current_balance', 'current_balance_usd', 'balance', 'balance_usd', 'total_balance', 'totalBalance'];
+  for (const key of keys) { const parsed = protocol.money(value?.[key]); if (parsed !== null) return parsed; }
+  return null;
+}
+function extractProviderInvoices(response) {
+  const value = protocol.payload(response);
+  if (response?.success === false || value?.success === false) throw Object.assign(new Error('Supplier invoice query failed'), { code: 'INVOICE_QUERY_FAILED', status: 502 });
+  const rows = [value, value?.invoices, value?.items, value?.data, value?.results].find(Array.isArray);
+  if (!rows) throw Object.assign(new Error('Unexpected supplier invoice schema'), { code: 'INVALID_INVOICE_RESPONSE', status: 502 });
+  return rows.filter(protocol.plain);
+}
+const getInvoiceAmountUsd = protocol.invoiceAmount;
+const invoiceId = (invoice) => protocol.invoiceName(invoice) || (typeof invoice?.name === 'string' ? invoice.name : '') || String(invoice?.id || '');
+function calculateFinancials({ paynetAmountSyp, providerCostUsd, exchangeRate }) {
+  if (providerCostUsd === null || providerCostUsd === undefined) return { actualCostSyp: null, profitSyp: null, profitPercent: null };
+  const cost = new Decimal(providerCostUsd).mul(exchangeRate);
+  const profit = new Decimal(paynetAmountSyp).minus(cost);
+  return { actualCostSyp: round(cost), profitSyp: round(profit), profitPercent: paynetAmountSyp > 0 ? round(profit.div(paynetAmountSyp).mul(100)) : 0 };
+}
+function reviewFilter() {
+  return { $and: [{ $or: [{ reviewResolvedAt: { $exists: false } }, { reviewResolvedAt: null }] }, { $or: [
+    { internalReviewStatus: 'needs_review' }, { status: { $in: ['unknown', 'manual_review', 'mismatch', 'delivery_pending'] } },
+    { invoiceMatchStatus: { $in: ['missing', 'mismatch'] } }, { providerBalanceStatus: 'mismatch' },
+  ] }] };
+}
+function buildFilter(query = {}) {
+  const clauses = [];
+  const base = {};
+  if (query.status && query.status !== 'mismatch') base.status = query.status;
+  if (query.operationType) base.operationType = query.operationType;
+  if (query.invoiceMatchStatus) base.invoiceMatchStatus = query.invoiceMatchStatus;
+  if (query.providerBalanceStatus) base.providerBalanceStatus = query.providerBalanceStatus;
+  if (query.date || query.fromDate || query.toDate) {
+    base.createdAt = {};
+    const from = query.date || query.fromDate, to = query.date || query.toDate;
+    if (from) base.createdAt.$gte = new Date(from + 'T00:00:00.000+03:00');
+    if (to) base.createdAt.$lte = new Date(to + 'T23:59:59.999+03:00');
+    if (Object.values(base.createdAt).some((date) => Number.isNaN(date.getTime()))) throw Object.assign(new Error('Invalid report date'), { status: 400 });
   }
-
-  for (const [key, raw] of Object.entries(value)) {
-    const parsed = toNumber(raw);
-    const score = scorer(key);
-
-    if (score > 0 && parsed !== null) {
-      const candidate = { score, value: parsed, key };
-      if (!best || candidate.score > best.score) best = candidate;
-    }
-
-    const nested = extractNumberByKey(raw, scorer, depth + 1);
-    if (nested && (!best || nested.score > best.score)) best = nested;
-  }
-
-  return best;
-};
-
-const extractProWaveBalanceUsd = (responseData) => {
-  const payload = getNestedPayload(responseData);
-  const directCandidates = [
-    payload?.available_balance,
-    payload?.available_balance_usd,
-    payload?.current_balance,
-    payload?.current_balance_usd,
-    payload?.balance,
-    payload?.balance_usd,
-    payload?.total_balance,
-    payload?.total_balance_usd,
-    payload?.totalBalance,
-  ];
-
-  for (const candidate of directCandidates) {
-    const parsed = toNumber(candidate);
-    if (parsed !== null) return parsed;
-  }
-
-  return extractNumberByKey(payload, balanceKeyScore)?.value ?? null;
-};
-
-const collectArrays = (value, arrays = [], depth = 0) => {
-  if (depth > 6 || value === null || value === undefined) return arrays;
-
-  if (Array.isArray(value)) {
-    if (value.some((item) => isPlainObject(item))) arrays.push(value);
-    value.forEach((item) => collectArrays(item, arrays, depth + 1));
-    return arrays;
-  }
-
-  if (typeof value === 'object') {
-    Object.values(value).forEach((item) => collectArrays(item, arrays, depth + 1));
-  }
-
-  return arrays;
-};
-
-const getInvoiceName = (invoice = {}) =>
-  invoice.sales_invoice ||
-  invoice.invoice_name ||
-  invoice.invoice ||
-  invoice.name ||
-  invoice.id ||
-  '';
-
-const getInvoiceAmountUsd = (invoice = {}) =>
-  toNumber(
-    invoice['Total Amount'] ??
-      invoice.total_amount ??
-      invoice.totalAmount ??
-      invoice.grand_total ??
-      invoice.rounded_total ??
-      invoice.amount
-  );
-
-const extractProviderInvoices = (responseData) => {
-  const payload = getNestedPayload(responseData);
-  const directCandidates = [
-    payload?.invoices,
-    payload?.items,
-    payload?.data,
-    payload?.results,
-    payload?.message,
-  ];
-
-  for (const candidate of directCandidates) {
-    if (Array.isArray(candidate)) return candidate.filter(isPlainObject);
-  }
-
-  const arrays = collectArrays(payload);
-  return arrays.sort((a, b) => b.length - a.length)[0]?.filter(isPlainObject) || [];
-};
-
-const getProviderDebitToleranceUsd = ({ expected, operationType }) => {
-  if (operationType !== DIRECT_TOPUP_OPERATION) return PROVIDER_DEBIT_TOLERANCE_USD;
-
-  const percentTolerance =
-    (Math.abs(Number(expected || 0)) * DIRECT_TOPUP_PROVIDER_DEBIT_TOLERANCE_PERCENT) / 100;
-
-  return Math.max(DIRECT_TOPUP_PROVIDER_DEBIT_TOLERANCE_USD, percentTolerance);
-};
-
-const getProviderDebitStatus = ({ expected, actual, operationType }) => {
-  if (actual === null || actual === undefined) return 'unavailable';
-  const difference = toRoundedNumber(Math.abs(Number(expected || 0) - Number(actual || 0)));
-  const tolerance = toRoundedNumber(getProviderDebitToleranceUsd({ expected, operationType }));
-
-  return difference <= tolerance
-    ? 'matched'
-    : 'mismatch';
-};
-
-const getReviewStatus = (mismatchReason) =>
-  mismatchReason ? 'needs_review' : 'clear';
-
-const getInvoiceReferenceDate = (transaction = {}) =>
-  transaction.completedAt ||
-  transaction.updatedAt ||
-  transaction.createdAt ||
-  transaction.startedAt ||
-  new Date();
-
-const isWithinMissingInvoiceGrace = (transaction = {}) => {
-  const referenceDate = new Date(getInvoiceReferenceDate(transaction)).getTime();
-  if (!Number.isFinite(referenceDate)) return false;
-
-  return Date.now() - referenceDate < PROWAVE_INVOICE_MISSING_GRACE_MS;
-};
-
-const wasProviderCompletedLocally = (transaction = {}) =>
-  transaction.status === 'completed' ||
-  transaction.status === 'mismatch' ||
-  Boolean(transaction.completedAt);
-
-const getEffectiveExpectedProviderDebitUsd = (transaction = {}) => {
-  const fallback = toRoundedNumber(transaction.expectedProviderDebitUsd);
-
-  if (transaction.operationType !== DIRECT_TOPUP_OPERATION) return fallback;
-
-  const catalogItem = findDirectTopUpCatalogItem({
-    game: transaction.game,
-    item_code: transaction.itemCode,
-    recharge_category: transaction.rechargeCategory,
-  });
-  const providerCostUsd = toNumber(catalogItem?.provider_cost_usd);
-  const quantity = Number(transaction.qty || 1);
-
-  if (providerCostUsd === null || providerCostUsd <= 0 || quantity <= 0) return fallback;
-
-  return toRoundedNumber(providerCostUsd * quantity);
-};
-
-const applyExpectedProviderDebitUsd = (transaction, expectedProviderDebitUsd) => {
-  if (!transaction || expectedProviderDebitUsd === null || expectedProviderDebitUsd === undefined) return;
-  if (transaction.operationType !== DIRECT_TOPUP_OPERATION) return;
-  if (Number(transaction.expectedProviderDebitUsd) === Number(expectedProviderDebitUsd)) return;
-
-  const quantity = Number(transaction.qty || 1);
-  const providerUnitCostUsd =
-    quantity > 0 ? toRoundedNumber(Number(expectedProviderDebitUsd) / quantity) : null;
-  const saleUnitPriceUsd = Number(transaction.saleUnitPriceUsd || transaction.unitPriceUsd || 0);
-  const providerDiscountUsd = toRoundedNumber(
-    Math.max(0, saleUnitPriceUsd - Number(providerUnitCostUsd || 0))
-  );
-  const providerDiscountPercent =
-    saleUnitPriceUsd > 0
-      ? toRoundedNumber((Number(providerDiscountUsd || 0) / saleUnitPriceUsd) * 100)
-      : 0;
-
-  transaction.expectedProviderDebitUsd = expectedProviderDebitUsd;
-  if (providerUnitCostUsd !== null) transaction.providerUnitCostUsd = providerUnitCostUsd;
-  transaction.providerDiscountUsd = providerDiscountUsd;
-  transaction.providerDiscountPercent = providerDiscountPercent;
-};
-
-const calculateFinancials = ({
-  paynetAmountSyp,
-  providerCostUsd,
-  exchangeRate,
-}) => {
-  const expectedCostSyp = toRoundedNumber(Number(providerCostUsd || 0) * Number(exchangeRate || 0));
-  const profitSyp = toRoundedNumber(Number(paynetAmountSyp || 0) - Number(expectedCostSyp || 0));
-  const profitPercent =
-    Number(paynetAmountSyp || 0) > 0
-      ? toRoundedNumber((Number(profitSyp || 0) / Number(paynetAmountSyp)) * 100)
-      : 0;
-
-  return {
-    expectedCostSyp,
-    actualCostSyp: expectedCostSyp,
-    profitSyp,
-    profitPercent,
-  };
-};
-
-const buildMismatchReason = ({
-  providerBalanceStatus,
-  invoiceMatchStatus,
-  expectedProviderDebitUsd,
-  actualProviderDebitUsd,
-  invoiceProviderDebitUsd,
-  hasInvoice,
-}) => {
-  const reasons = [];
-
-  if (!hasInvoice) reasons.push('لا توجد فاتورة ProWave محفوظة للعملية');
-  if (invoiceMatchStatus === 'missing') reasons.push('فاتورة ProWave غير موجودة في كشف ProWave');
-  if (invoiceMatchStatus === 'mismatch') {
-    reasons.push(
-      `قيمة الفاتورة لا تطابق المتوقع (${expectedProviderDebitUsd} / ${invoiceProviderDebitUsd})`
-    );
-  }
-  if (providerBalanceStatus === 'mismatch') {
-    reasons.push(
-      `فرق رصيد ProWave لا يطابق المتوقع (${expectedProviderDebitUsd} / ${actualProviderDebitUsd})`
-    );
-  }
-
-  return reasons.join('، ');
-};
-
-const resolveCompletedStatus = ({
-  providerBalanceStatus,
-  invoiceMatchStatus = 'pending',
-  hasInvoice,
-  expectedProviderDebitUsd,
-  actualProviderDebitUsd,
-  invoiceProviderDebitUsd,
-}) => {
-  const mismatchReason = buildMismatchReason({
-    providerBalanceStatus,
-    invoiceMatchStatus,
-    expectedProviderDebitUsd,
-    actualProviderDebitUsd,
-    invoiceProviderDebitUsd,
-    hasInvoice,
-  });
-
-  return {
-    status: 'completed',
-    mismatchReason,
-    internalReviewStatus: getReviewStatus(mismatchReason),
-    internalReviewReason: mismatchReason,
-  };
-};
-
-const createPendingTransaction = async ({
-  payment,
-  user,
-  userEmail,
-  operationType = 'digital_card',
-  itemCode,
-  itemName,
-  itemTitle,
-  game,
-  playerId,
-  rechargeCategory,
-  qty,
-  currency,
-  paynetAmountSyp,
-  paynetUnitAmountSyp,
-  paynetBalanceBeforeSyp,
-  pricing,
-  quote,
-  clientRequestId,
-}) => {
-  const quantity = Number(qty || 1);
-  const saleUnitPriceUsd = toRoundedNumber(
-    Number(pricing.saleUnitPriceUsd || pricing.unitPriceUsd || 0)
-  );
-  const providerUnitCostUsd = toRoundedNumber(
-    Number(
-      pricing.providerUnitCostUsd ||
-        pricing.providerCostUsd ||
-        pricing.providerUnitPriceUsd ||
-        saleUnitPriceUsd ||
-        0
-    )
-  );
-  const providerDiscountUsd = toRoundedNumber(
-    Math.max(0, Number(saleUnitPriceUsd || 0) - Number(providerUnitCostUsd || 0))
-  );
-  const providerDiscountPercent =
-    Number(saleUnitPriceUsd || 0) > 0
-      ? toRoundedNumber((Number(providerDiscountUsd || 0) / Number(saleUnitPriceUsd)) * 100)
-      : 0;
-  const expectedProviderDebitUsd = toRoundedNumber(Number(providerUnitCostUsd || 0) * quantity);
-  const financials = calculateFinancials({
-    paynetAmountSyp,
-    providerCostUsd: expectedProviderDebitUsd,
-    exchangeRate: pricing.exchangeRate,
-  });
-
-  return ProWaveTransaction.create({
-    payment,
-    user,
-    userEmail,
-    operationType,
-    itemCode,
-    itemName,
-    itemTitle,
-    game,
-    playerId,
-    rechargeCategory,
-    qty,
-    prowaveCurrency: currency,
-    paynetAmountSyp,
-    paynetUnitAmountSyp,
-    paynetBalanceBeforeSyp,
-    unitPriceUsd: saleUnitPriceUsd,
-    saleUnitPriceUsd,
-    providerUnitCostUsd,
-    providerDiscountUsd,
-    providerDiscountPercent,
-    expectedProviderDebitUsd,
-    exchangeRate: pricing.exchangeRate,
-    marginPercent: pricing.marginPercent || 0,
-    roundingStep: pricing.roundingStep || 1,
-    ...financials,
-    quote,
-    clientRequestId,
-    startedAt: new Date(),
-  });
-};
-
-const markPayNetReserved = (transactionId, { payment, paynetBalanceAfterSyp }) =>
-  ProWaveTransaction.findByIdAndUpdate(
-    transactionId,
-    {
-      payment,
-      paynetBalanceAfterSyp,
-    },
-    { new: true }
-  );
-
-const markCompletedTransaction = async (
-  transactionId,
-  {
-    prowaveInvoice,
-    providerBalanceBeforeResponse,
-    providerBalanceAfterResponse,
-    purchaseResponse,
-    codesResponse,
-    invoiceProviderDebitUsd,
-  }
-) => {
-  const transaction = await ProWaveTransaction.findById(transactionId);
-  if (!transaction) return null;
-
-  const balanceBefore = extractProWaveBalanceUsd(providerBalanceBeforeResponse);
-  const balanceAfter = extractProWaveBalanceUsd(providerBalanceAfterResponse);
-  const actualProviderDebitUsd =
-    balanceBefore !== null && balanceAfter !== null
-      ? toRoundedNumber(balanceBefore - balanceAfter)
-      : null;
-  const expectedProviderDebitUsd = getEffectiveExpectedProviderDebitUsd(transaction);
-  applyExpectedProviderDebitUsd(transaction, expectedProviderDebitUsd);
-  const actualCostUsd = invoiceProviderDebitUsd || actualProviderDebitUsd || expectedProviderDebitUsd;
-  const providerBalanceStatus = getProviderDebitStatus({
-    expected: expectedProviderDebitUsd,
-    actual: actualProviderDebitUsd,
-    operationType: transaction.operationType,
-  });
-  const invoiceMatchStatus = invoiceProviderDebitUsd
-    ? getProviderDebitStatus({
-        expected: expectedProviderDebitUsd,
-        actual: invoiceProviderDebitUsd,
-        operationType: transaction.operationType,
-      })
-    : 'pending';
-  const financials = calculateFinancials({
-    paynetAmountSyp: transaction.paynetAmountSyp,
-    providerCostUsd: actualCostUsd,
-    exchangeRate: transaction.exchangeRate,
-  });
-  const resolved = resolveCompletedStatus({
-    providerBalanceStatus,
-    invoiceMatchStatus,
-    hasInvoice: Boolean(prowaveInvoice),
-    expectedProviderDebitUsd,
-    actualProviderDebitUsd,
-    invoiceProviderDebitUsd,
-  });
-
-  transaction.prowaveInvoice = prowaveInvoice;
-  transaction.prowaveBalanceBeforeUsd = balanceBefore;
-  transaction.prowaveBalanceAfterUsd = balanceAfter;
-  transaction.actualProviderDebitUsd = actualProviderDebitUsd;
-  transaction.invoiceProviderDebitUsd = invoiceProviderDebitUsd || undefined;
-  transaction.providerBalanceStatus = providerBalanceStatus;
-  transaction.invoiceMatchStatus = invoiceMatchStatus;
-  transaction.status = resolved.status;
-  transaction.mismatchReason = resolved.mismatchReason;
-  transaction.internalReviewStatus = resolved.internalReviewStatus;
-  transaction.internalReviewReason = resolved.internalReviewReason;
-  transaction.rawProviderBalanceBefore = providerBalanceBeforeResponse;
-  transaction.rawProviderBalanceAfter = providerBalanceAfterResponse;
-  transaction.rawPurchaseResponse = purchaseResponse;
-  transaction.rawCodesResponse = codesResponse;
-  transaction.completedAt = new Date();
-  Object.assign(transaction, financials);
-
-  return transaction.save();
-};
-
-const markFailedTransaction = async (
-  transactionId,
-  {
-    failureStage,
-    failureReason,
-    error,
-    refunded = false,
-    paynetRefundedSyp,
-    providerBalanceBeforeResponse,
-    providerBalanceAfterResponse,
-  }
-) => {
-  if (!transactionId) return null;
-
-  const update = {
-    status: refunded ? 'refunded' : 'failed',
-    failureStage,
-    failureReason,
-    mismatchReason: failureReason || '',
-    failedAt: new Date(),
-  };
-
-  if (refunded) {
-    update.paynetRefundedSyp = paynetRefundedSyp;
-    update.paynetRefundedAt = new Date();
-  }
-
-  if (error !== undefined) update.rawPurchaseResponse = error;
-  if (providerBalanceBeforeResponse !== undefined) {
-    update.rawProviderBalanceBefore = providerBalanceBeforeResponse;
-  }
-  if (providerBalanceAfterResponse !== undefined) {
-    update.rawProviderBalanceAfter = providerBalanceAfterResponse;
-  }
-
-  return ProWaveTransaction.findByIdAndUpdate(transactionId, update, { new: true });
-};
-
-const buildTransactionFilter = (query = {}) => {
-  const filter = {};
-
-  if (query.status) filter.status = query.status;
-  if (query.operationType) filter.operationType = query.operationType;
-  if (query.invoiceMatchStatus) filter.invoiceMatchStatus = query.invoiceMatchStatus;
-  if (query.providerBalanceStatus) filter.providerBalanceStatus = query.providerBalanceStatus;
-
-  if (query.fromDate || query.toDate || query.date) {
-    const from = query.date || query.fromDate;
-    const to = query.date || query.toDate;
-    filter.createdAt = {};
-    if (from) filter.createdAt.$gte = new Date(`${from}T00:00:00.000Z`);
-    if (to) filter.createdAt.$lte = new Date(`${to}T23:59:59.999Z`);
-  }
-
   if (query.search) {
-    const search = new RegExp(String(query.search).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
-    filter.$or = [
-      { userEmail: search },
-      { itemCode: search },
-      { itemTitle: search },
-      { game: search },
-      { playerId: search },
-      { rechargeCategory: search },
-      { prowaveInvoice: search },
-      { prowaveRequestName: search },
-      { mismatchReason: search },
-    ];
+    const escaped = String(query.search).slice(0, 256).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const search = new RegExp(escaped, 'i');
+    base.$or = ['userEmail', 'itemCode', 'itemTitle', 'game', 'playerId', 'prowaveInvoice', 'prowaveRequestName', 'clientRequestId'].map((field) => ({ [field]: search }));
   }
-
-  return filter;
-};
-
-const getPagination = (query = {}) => {
-  const page = Math.max(1, Number(query.page) || 1);
-  const limit = Math.min(Math.max(1, Number(query.limit) || 20), 100);
-  return {
-    page,
-    limit,
-    skip: (page - 1) * limit,
-  };
-};
-
-const getReconciliationReport = async (query = {}) => {
-  const filter = buildTransactionFilter(query);
-  const { page, limit, skip } = getPagination(query);
-
+  clauses.push(base);
+  if (query.status === 'mismatch' || query.review === 'needs_review' || query.review === 'true') clauses.push(reviewFilter());
+  return clauses.length === 1 ? base : { $and: clauses };
+}
+async function getReconciliationReport(query = {}) {
+  const filter = buildFilter(query);
+  const page = Math.max(1, Math.trunc(Number(query.page)) || 1), limit = Math.min(100, Math.max(1, Math.trunc(Number(query.limit)) || 20));
+  const settled = { $in: ['$status', ['completed', 'mismatch']] };
   const [transactions, total, totals] = await Promise.all([
-    ProWaveTransaction.find(filter)
-      .populate('user', 'name email')
-      .populate('payment', 'status amount calculatedAmount createdAt')
-      .sort({ createdAt: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean(),
-    ProWaveTransaction.countDocuments(filter),
-    ProWaveTransaction.aggregate([
-      { $match: filter },
-      {
-        $group: {
-          _id: null,
-          count: { $sum: 1 },
-          saleAmountUsd: {
-            $sum: {
-              $multiply: [
-                { $ifNull: ['$saleUnitPriceUsd', '$unitPriceUsd'] },
-                { $ifNull: ['$qty', 1] },
-              ],
-            },
-          },
-          providerDiscountUsd: {
-            $sum: {
-              $multiply: [
-                { $ifNull: ['$providerDiscountUsd', 0] },
-                { $ifNull: ['$qty', 1] },
-              ],
-            },
-          },
-          paynetAmountSyp: { $sum: '$paynetAmountSyp' },
-          expectedProviderDebitUsd: { $sum: '$expectedProviderDebitUsd' },
-          actualProviderDebitUsd: { $sum: { $ifNull: ['$actualProviderDebitUsd', 0] } },
-          expectedCostSyp: { $sum: '$expectedCostSyp' },
-          actualCostSyp: { $sum: '$actualCostSyp' },
-          profitSyp: { $sum: '$profitSyp' },
-          mismatches: {
-            $sum: {
-              $cond: [
-                {
-                  $or: [
-                    { $eq: ['$status', 'mismatch'] },
-                    { $eq: ['$internalReviewStatus', 'needs_review'] },
-                    { $eq: ['$invoiceMatchStatus', 'mismatch'] },
-                    { $eq: ['$invoiceMatchStatus', 'missing'] },
-                    { $eq: ['$providerBalanceStatus', 'mismatch'] },
-                  ],
-                },
-                1,
-                0,
-              ],
-            },
-          },
-          failed: {
-            $sum: { $cond: [{ $in: ['$status', ['failed', 'refunded']] }, 1, 0] },
-          },
-        },
-      },
-    ]),
+    Transaction.find(filter).populate('user', 'name email').populate('payment', 'status amount calculatedAmount createdAt').sort({ createdAt: -1 }).skip((page - 1) * limit).limit(limit).lean(),
+    Transaction.countDocuments(filter),
+    Transaction.aggregate([{ $match: filter }, { $group: {
+      _id: null, count: { $sum: 1 },
+      saleAmountUsd: { $sum: { $cond: [settled, { $multiply: [{ $ifNull: ['$saleUnitPriceUsd', '$unitPriceUsd'] }, { $ifNull: ['$qty', 1] }] }, 0] } },
+      providerDiscountUsd: { $sum: { $cond: [settled, { $multiply: [{ $ifNull: ['$providerDiscountUsd', 0] }, { $ifNull: ['$qty', 1] }] }, 0] } },
+      paynetAmountSyp: { $sum: { $cond: [settled, '$paynetAmountSyp', 0] } },
+      reservedAmountSyp: { $sum: { $cond: [{ $in: ['$status', ['pending', 'unknown', 'manual_review', 'delivery_pending']] }, '$paynetAmountSyp', 0] } },
+      refundedAmountSyp: { $sum: { $ifNull: ['$paynetRefundedSyp', 0] } },
+      expectedProviderDebitUsd: { $sum: { $cond: [settled, '$expectedProviderDebitUsd', 0] } },
+      actualProviderDebitUsd: { $sum: { $cond: [settled, { $ifNull: ['$invoiceProviderDebitUsd', '$actualProviderDebitUsd'] }, 0] } },
+      expectedCostSyp: { $sum: { $cond: [settled, '$expectedCostSyp', 0] } },
+      actualCostSyp: { $sum: { $cond: [settled, { $cond: [{ $ne: [{ $ifNull: ['$invoiceProviderDebitUsd', null] }, null] }, '$actualCostSyp', 0] }, 0] } },
+      profitSyp: { $sum: { $cond: [settled, { $cond: [{ $ne: [{ $ifNull: ['$invoiceProviderDebitUsd', null] }, null] }, '$profitSyp', 0] }, 0] } },
+      estimatedProfitSyp: { $sum: { $cond: [settled, { $ifNull: ['$estimatedProfitSyp', { $subtract: ['$paynetAmountSyp', '$expectedCostSyp'] }] }, 0] } },
+      costUnconfirmed: { $sum: { $cond: [{ $and: [settled, { $eq: [{ $ifNull: ['$invoiceProviderDebitUsd', null] }, null] }] }, 1, 0] } },
+      mismatches: { $sum: { $cond: [{ $and: [{ $eq: [{ $ifNull: ['$reviewResolvedAt', null] }, null] }, { $or: [
+        { $eq: ['$internalReviewStatus', 'needs_review'] }, { $in: ['$status', ['unknown', 'manual_review', 'mismatch', 'delivery_pending']] },
+        { $in: ['$invoiceMatchStatus', ['missing', 'mismatch']] }, { $eq: ['$providerBalanceStatus', 'mismatch'] },
+      ] }] }, 1, 0] } },
+      failed: { $sum: { $cond: [{ $in: ['$status', ['failed', 'refunded']] }, 1, 0] } },
+    } }]),
   ]);
-
-  return {
-    transactions,
-    summary: totals[0] || {
-      count: 0,
-      saleAmountUsd: 0,
-      providerDiscountUsd: 0,
-      paynetAmountSyp: 0,
-      expectedProviderDebitUsd: 0,
-      actualProviderDebitUsd: 0,
-      expectedCostSyp: 0,
-      actualCostSyp: 0,
-      profitSyp: 0,
-      mismatches: 0,
-      failed: 0,
-    },
-    pagination: {
-      page,
-      limit,
-      total,
-      totalPages: Math.max(1, Math.ceil(total / limit)),
-    },
-  };
-};
-
-const reconcileTransactionsWithInvoices = async (providerInvoicesResponse) => {
-  const invoices = extractProviderInvoices(providerInvoicesResponse);
-  const invoiceByName = new Map(
-    invoices
-      .map((invoice) => [String(getInvoiceName(invoice) || ''), invoice])
-      .filter(([name]) => Boolean(name))
-  );
-
-  const transactions = await ProWaveTransaction.find({
-    prowaveInvoice: { $exists: true, $ne: '' },
-    status: { $in: ['pending', 'completed', 'mismatch'] },
-  }).limit(1000);
-
-  let matched = 0;
-  let missing = 0;
-  let mismatched = 0;
-
-  for (const transaction of transactions) {
-    const invoice = invoiceByName.get(String(transaction.prowaveInvoice || ''));
-    const expectedProviderDebitUsd = getEffectiveExpectedProviderDebitUsd(transaction);
-    applyExpectedProviderDebitUsd(transaction, expectedProviderDebitUsd);
-
-    if (!invoice) {
-      const keepPreviousMatchedInvoice =
-        transaction.invoiceMatchStatus === 'matched' && transaction.rawInvoice;
-      const withinGrace = isWithinMissingInvoiceGrace(transaction);
-      const nextInvoiceStatus = keepPreviousMatchedInvoice
-        ? 'matched'
-        : withinGrace
-          ? 'pending'
-          : 'missing';
-      const nextMismatchReason =
-        nextInvoiceStatus === 'missing'
-          ? buildMismatchReason({
-              providerBalanceStatus: transaction.providerBalanceStatus,
-              invoiceMatchStatus: 'missing',
-              expectedProviderDebitUsd,
-              actualProviderDebitUsd: transaction.actualProviderDebitUsd,
-              hasInvoice: Boolean(transaction.prowaveInvoice),
-            })
-          : '';
-
-      transaction.invoiceMatchStatus = nextInvoiceStatus;
-      transaction.status = wasProviderCompletedLocally(transaction) ? 'completed' : 'pending';
-      transaction.mismatchReason = nextMismatchReason;
-      transaction.internalReviewStatus =
-        nextInvoiceStatus === 'pending' ? 'pending' : getReviewStatus(nextMismatchReason);
-      transaction.internalReviewReason = nextMismatchReason;
-      missing += 1;
-      await transaction.save();
-      continue;
+  return { transactions, summary: totals[0] || { count: 0, saleAmountUsd: 0, providerDiscountUsd: 0, paynetAmountSyp: 0, reservedAmountSyp: 0, refundedAmountSyp: 0, expectedProviderDebitUsd: 0, actualProviderDebitUsd: 0, expectedCostSyp: 0, actualCostSyp: 0, profitSyp: 0, estimatedProfitSyp: 0, costUnconfirmed: 0, mismatches: 0, failed: 0 }, pagination: { page, limit, total, totalPages: Math.max(1, Math.ceil(total / limit)) } };
+}
+async function reconcileTransactionsWithInvoices(response, { completeCoverage = false } = {}) {
+  const invoices = extractProviderInvoices(response);
+  const byName = new Map(invoices.map((invoice) => [invoiceId(invoice), invoice]).filter(([name]) => name));
+  let cursor = null, matched = 0, missing = 0, mismatched = 0, scannedTransactions = 0;
+  for (;;) {
+    const filter = { prowaveInvoice: { $exists: true, $ne: '' }, status: { $in: ['pending', 'delivery_pending', 'completed', 'mismatch'] }, ...(cursor ? { _id: { $gt: cursor } } : {}) };
+    const transactions = await Transaction.find(filter).sort({ _id: 1 }).limit(500);
+    if (!transactions.length) break;
+    for (const transaction of transactions) {
+      scannedTransactions++;
+      const invoice = byName.get(transaction.prowaveInvoice);
+      if (!invoice) {
+        if (!completeCoverage || transaction.invoiceMatchStatus === 'matched' && transaction.rawInvoice) continue;
+        const date = transaction.completedAt || transaction.startedAt || transaction.createdAt;
+        if (Date.now() - new Date(date).getTime() < graceMs) continue;
+        await Transaction.updateOne({ _id: transaction._id, invoiceMatchStatus: { $ne: 'matched' } }, { $set: { invoiceMatchStatus: 'missing', internalReviewStatus: 'needs_review', internalReviewReason: 'الفاتورة غائبة عن سجل المزوّد الكامل', mismatchReason: 'الفاتورة غائبة عن سجل المزوّد الكامل' } });
+        missing++; continue;
+      }
+      const cost = getInvoiceAmountUsd(invoice);
+      const tolerance = transaction.operationType === 'direct_topup' ? Math.max(0.1, transaction.expectedProviderDebitUsd * 0.05) : 0.01;
+      const invoiceMatchStatus = cost === null ? 'unavailable' : new Decimal(cost).minus(transaction.expectedProviderDebitUsd).abs().lte(tolerance) ? 'matched' : 'mismatch';
+      const reason = invoiceMatchStatus === 'mismatch' ? 'تكلفة الفاتورة لا تطابق لقطة سعر الشراء' : invoiceMatchStatus === 'unavailable' ? 'تعذر قراءة تكلفة الفاتورة' : '';
+      const update = { invoiceMatchStatus, rawInvoice: invoice, invoiceProviderDebitUsd: cost,
+        internalReviewStatus: reason ? transaction.reviewResolvedAt && transaction.internalReviewReason === reason ? 'clear' : 'needs_review' : 'clear', internalReviewReason: reason, mismatchReason: reason };
+      if (cost !== null && ['completed', 'mismatch'].includes(transaction.status)) Object.assign(update, calculateFinancials({ paynetAmountSyp: transaction.paynetAmountSyp, providerCostUsd: cost, exchangeRate: transaction.exchangeRate }));
+      await Transaction.updateOne({ _id: transaction._id, status: transaction.status }, { $set: update });
+      if (invoiceMatchStatus === 'matched') matched++;
+      if (invoiceMatchStatus === 'mismatch') mismatched++;
     }
-
-    const invoiceProviderDebitUsd = getInvoiceAmountUsd(invoice);
-    const invoiceMatchStatus = getProviderDebitStatus({
-      expected: expectedProviderDebitUsd,
-      actual: invoiceProviderDebitUsd,
-      operationType: transaction.operationType,
-    });
-    const financials = calculateFinancials({
-      paynetAmountSyp: transaction.paynetAmountSyp,
-      providerCostUsd: invoiceProviderDebitUsd || transaction.actualProviderDebitUsd || transaction.expectedProviderDebitUsd,
-      exchangeRate: transaction.exchangeRate,
-    });
-    const resolved = resolveCompletedStatus({
-      providerBalanceStatus: transaction.providerBalanceStatus,
-      invoiceMatchStatus,
-      hasInvoice: true,
-      expectedProviderDebitUsd,
-      actualProviderDebitUsd: transaction.actualProviderDebitUsd,
-      invoiceProviderDebitUsd,
-    });
-
-    transaction.invoiceProviderDebitUsd = invoiceProviderDebitUsd || undefined;
-    transaction.invoiceMatchStatus = invoiceMatchStatus;
-    transaction.status = resolved.status;
-    transaction.mismatchReason = resolved.mismatchReason;
-    transaction.internalReviewStatus = resolved.internalReviewStatus;
-    transaction.internalReviewReason = resolved.internalReviewReason;
-    transaction.rawInvoice = invoice;
-    Object.assign(transaction, financials);
-    await transaction.save();
-
-    if (invoiceMatchStatus === 'matched') matched += 1;
-    if (invoiceMatchStatus === 'mismatch') mismatched += 1;
+    cursor = transactions[transactions.length - 1]._id;
+    if (transactions.length < 500) break;
   }
-
-  return {
-    providerInvoices: invoices.length,
-    scannedTransactions: transactions.length,
-    matched,
-    missing,
-    mismatched,
-  };
-};
-
-module.exports = {
-  calculateFinancials,
-  createPendingTransaction,
-  extractProWaveBalanceUsd,
-  extractProviderInvoices,
-  getInvoiceAmountUsd,
-  getReconciliationReport,
-  markCompletedTransaction,
-  markFailedTransaction,
-  markPayNetReserved,
-  reconcileTransactionsWithInvoices,
-};
+  return { providerInvoices: invoices.length, scannedTransactions, matched, missing, mismatched, completeCoverage };
+}
+module.exports = { calculateFinancials, extractProWaveBalanceUsd, extractProviderInvoices, getInvoiceAmountUsd, getReconciliationReport, reconcileTransactionsWithInvoices, buildFilter };

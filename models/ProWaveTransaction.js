@@ -24,6 +24,27 @@ const proWaveTransactionSchema = new mongoose.Schema(
       trim: true,
       index: true,
     },
+    requestFingerprint: String,
+    legacyClientRequestId: String,
+    providerRequest: mongoose.Schema.Types.Mixed,
+    requestBinding: String,
+    stage: { type: String, default: 'reserved', index: true },
+    reservedAt: Date,
+    nextCheckAt: { type: Date, index: true },
+    leaseOwner: String,
+    leaseUntil: { type: Date, index: true },
+    attempts: { type: Number, default: 0 },
+    checkAttempts: { type: Number, default: 0 },
+    lastErrorCode: String,
+    errorHistory: [{ at: Date, code: String, phase: String, outcome: String }],
+    lastCheckedAt: Date,
+    reviewResolvedAt: Date,
+    reviewResolvedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+    reviewResolutionNote: String,
+    deliveryStatus: { type: String, enum: ['pending', 'delivered', 'not_applicable'], default: 'pending' },
+    digitalCodes: mongoose.Schema.Types.Mixed,
+    estimatedProfitSyp: Number,
+    productConfigRevision: { type: Number, default: 0 },
     operationType: {
       type: String,
       enum: ['digital_card', 'direct_topup'],
@@ -138,7 +159,7 @@ const proWaveTransactionSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ['pending', 'completed', 'mismatch', 'failed', 'refunded'],
+      enum: ['pending', 'unknown', 'manual_review', 'delivery_pending', 'completed', 'mismatch', 'failed', 'refunded'],
       default: 'pending',
       index: true,
     },
@@ -176,12 +197,15 @@ const proWaveTransactionSchema = new mongoose.Schema(
 );
 
 proWaveTransactionSchema.index({ createdAt: -1 });
+proWaveTransactionSchema.index({ updatedAt: 1 });
 proWaveTransactionSchema.index({ status: 1, createdAt: -1 });
 proWaveTransactionSchema.index({ operationType: 1, createdAt: -1 });
 proWaveTransactionSchema.index({ prowaveInvoice: 1, itemCode: 1 });
 proWaveTransactionSchema.index(
   { user: 1, operationType: 1, clientRequestId: 1 },
-  { unique: true, sparse: true }
+  { unique: true, partialFilterExpression: { clientRequestId: { $type: 'string' } }, name: 'prowave_request_id_unique' }
 );
+proWaveTransactionSchema.index({ status: 1, nextCheckAt: 1, leaseUntil: 1 });
+proWaveTransactionSchema.index({ requestBinding: 1 }, { unique: true, partialFilterExpression: { requestBinding: { $type: 'string' } }, name: 'prowave_provider_reference_unique' });
 
 module.exports = mongoose.model('ProWaveTransaction', proWaveTransactionSchema);

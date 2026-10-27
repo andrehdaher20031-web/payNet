@@ -26,3 +26,4 @@ yarn-error.log
 
 # Project-specific (ignore if you do not want this file tracked)
 addUser.js
+password-reset*.json

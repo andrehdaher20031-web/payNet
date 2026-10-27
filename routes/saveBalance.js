@@ -5,6 +5,8 @@ const router = express.Router();
 const Balance = require('../models/Balance');
 const User = require('../models/User');
 const authMiddleware = require('../middleware/auth');
+const requireAdmin = require('../middleware/requireAdmin');
+const { sypAmount } = require('../utils/money');
 const { confirmPaymentService } = require('../services/payments.services');
 const { cache } = require('../services/cache.service');
 const {
@@ -42,15 +44,13 @@ router.post('/haram', authMiddleware, async (req, res) => {
     const userId = req.user.id;
     const cleanNoticeNumber = String(noticeNumber || '').trim();
 
-    if (!cleanNoticeNumber) {
+    if (!/^\d{1,30}$/.test(cleanNoticeNumber)) {
       return res.status(400).json({
         message: 'رقم الإشعار مطلوب',
       });
     }
 
-    const existingNotice = await Balance.findOne({
-      noticeNumber: cleanNoticeNumber,
-    });
+    const existingNotice = await Balance.collection.findOne({ noticeNumber: { $in: [cleanNoticeNumber, Number(cleanNoticeNumber)] } });
 
     if (existingNotice) {
       return res.status(409).json({
@@ -72,11 +72,11 @@ router.post('/haram', authMiddleware, async (req, res) => {
     const balanceDoc = new Balance({
       user: userId,
       destination,
-      name,
+      name: user.email,
       number,
       operator,
       noticeNumber: cleanNoticeNumber,
-      amount: Number(amount),
+      amount: Number(sypAmount(amount)),
       date,
       amountDaen,
     });
@@ -84,9 +84,9 @@ router.post('/haram', authMiddleware, async (req, res) => {
     await balanceDoc.save();
     await invalidateBalanceCache();
 
-    const apiUrl = `https://apisyria.com/api/v1?resource=shamcash&action=find_tx&tx=${cleanNoticeNumber}&account_address=94c308290d8df1af551993db4ca3de0d&api_key=5eef4628bbf241f2b56bb73c60e8cd8de633513818b68db362b477eb17c05771`;
-
-    const response = await fetch(apiUrl);
+    if (!process.env.SHAMCASH_ACCOUNT_ADDRESS || !process.env.SHAMCASH_API_KEY) return res.status(202).json({ message: 'تم حفظ الطلب للمراجعة اليدوية' });
+    const params = new URLSearchParams({ resource: 'shamcash', action: 'find_tx', tx: cleanNoticeNumber, account_address: process.env.SHAMCASH_ACCOUNT_ADDRESS, api_key: process.env.SHAMCASH_API_KEY });
+    const response = await fetch('https://apisyria.com/api/v1?' + params, { signal: AbortSignal.timeout(20000) });
 
     if (!response.ok) {
       console.log('API Error:', response.status);
@@ -98,8 +98,6 @@ router.post('/haram', authMiddleware, async (req, res) => {
 
     const autoConfirm = await response.json();
 
-    console.log('الرد من API:', autoConfirm);
-    console.log(autoConfirm?.data?.found);
     if (!autoConfirm?.data?.found) {
       return res.status(404).json({
         message: 'خطأ في رقم الإشعار الرجاء التأكد منه',
@@ -115,7 +113,6 @@ router.post('/haram', authMiddleware, async (req, res) => {
     const diffMs = Math.abs(apiDate.getTime() - requestDate.getTime());
     const diffHours = diffMs / (1000 * 60 * 60);
 
-    console.log('فرق الوقت بالساعات:', diffHours);
 
     if (
       Number(autoConfirm?.data?.transaction?.amount) === Number(amount) &&
@@ -136,9 +133,10 @@ router.post('/haram', authMiddleware, async (req, res) => {
       message: 'لم يتم اضافة الرصيد و جاري معالجة الطلب يدويًا',
     });
   } catch (error) {
-    console.error(error);
+    if (error.code === 11000) return res.status(409).json({ message: 'رقم الإشعار مستخدم مسبقًا' });
+    console.error('Deposit verification failed:', error.code || error.name);
 
-    return res.status(500).json({
+    return res.status(error.status || 500).json({
       message: 'خطأ في الخادم',
     });
   }
@@ -165,7 +163,7 @@ router.get('/all', authMiddleware, async (req, res) => {
   }
 });
 
-router.get('/all-admin', async (req, res) => {
+router.get('/all-admin', authMiddleware, requireAdmin, async (req, res) => {
   try {
     const { page, limit, skip } = getPagination(req.query);
     const filter = buildBalanceFilters(req.query);

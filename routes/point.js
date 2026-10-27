@@ -14,6 +14,7 @@ const {
   paginatedResponse,
 } = require("../utils/pagination");
 const { normalizePaymentStatusLabel } = require("../utils/paymentStatus");
+router.use(authMiddleware);
 
 const BALANCE_FIELDS = 'destination name number operator amount noticeNumber amountDaen date isConfirmed status createdAt user';
 const PAYMENT_FIELDS = 'landline company speed email amount calculatedAmount paymentType status note extra createdAt updatedAt user';
@@ -29,7 +30,8 @@ const invalidatePointCache = async () => {
 
 router.post("/add-point", async (req, res) => {
   try {
-    const { formData, email } = req.body;
+    const { formData } = req.body;
+    const email = req.user.email;
         const existUser = await User.findOne({ email: formData.username });
     if (existUser) {
       return res.status(400).json({ message: "هذا المستخدم موجود بالفعل" });
@@ -66,7 +68,7 @@ router.post("/add-point", async (req, res) => {
 
 router.get('/add-point', async (req, res) => {
   try {
-    const { email } = req.query; // ✅ استخدم query وليس body
+    const email = req.user.role === 'admin' && typeof req.query.email === 'string' ? req.query.email : req.user.email;
     const FormData = await Point.find({ email }).select('username balance owner email createdAt updatedAt').lean();
     res.status(200).json(FormData);
   } catch (err) {
@@ -83,6 +85,7 @@ router.delete('/delete/:id', async (req, res) => {
       return res.status(404).json({ message: "Point not found" });
     }
 
+    if (req.user.role !== 'admin' && emailPoint.email !== req.user.email) return res.status(403).json({ message: 'هذه النقطة لا تتبع حسابك' });
     await Point.findByIdAndDelete(idDelete);
     await User.findOneAndDelete({ email: emailPoint.username });
     await invalidatePointCache();
@@ -104,10 +107,11 @@ router.put('/add-balance/:id', async (req, res) => {
 
     // إيجاد نقطة البيع أولًا
     const findPoint = await Point.findById(id);
+    if (findPoint && req.user.role !== 'admin' && findPoint.email !== req.user.email) return res.status(403).json({ message: 'هذه النقطة لا تتبع حسابك' });
     if (!findPoint) return res.status(404).json({ message: "نقطة البيع غير موجودة" });
 
     // إيجاد المستخدم الذي سيدفع
-    const user = await User.findOne({ email });
+    const user = await User.findById(req.user.id);
     if (!user) return res.status(404).json({ message: "المستخدم غير موجود" });
 
     if (user.balance < value) {
@@ -119,15 +123,15 @@ router.put('/add-balance/:id', async (req, res) => {
     if (!point) return res.status(404).json({ message: "الحساب المرتبط بنقطة البيع غير موجود" });
 
         const balanceDaen = await Balance.findOne({}).sort({_id:-1});
-        const amountDaen = balanceDaen.amountDaen || 0;
+        const amountDaen = balanceDaen?.amountDaen || 0;
         
 
     // حفظ عملية الدفع
     const balanceDoc = new Balance({
       user: id,
-      destination: email,
-      name: username,
-      operator: owner,
+      destination: user.email,
+      name: findPoint.username,
+      operator: findPoint.owner,
       amount: value,
       isConfirmed: true,
       amountDaen,
@@ -197,7 +201,7 @@ router.get("/all", authMiddleware, async (req, res) => {
 
 router.get("/all-point", async (req, res) => {
   try {
-    const {email} = req.query;
+    const email = req.user.role === 'admin' && typeof req.query.email === 'string' ? req.query.email : req.user.email;
     const { page, limit, skip } = getPagination(req.query);
     const filter = { name: email };
     const [payments, total] = await Promise.all([

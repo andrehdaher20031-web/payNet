@@ -6,7 +6,10 @@ const authMiddleware = require('../middleware/authMiddleware');
 const requireAdmin = require('../middleware/requireAdmin');
 const User = require('../models/User');
 const Balance = require('../models/Balance');
-const { confirmPaymentService } = require('../services/payments.services');
+const { confirmPaymentService, refundManualPayment, transitionManualPayment, isProviderManaged, atomic } = require('../services/payments.services');
+const { Decimal, sypAmount, walletAdjustment, MAX_WALLET } = require('../utils/money');
+const WalletAdjustment = require('../models/WalletAdjustment');
+const { customerPayment } = require('../utils/customerPayment');
 const exchangeRateController = require('../controllers/exchangeRateController');
 const proWaveController = require('../controllers/proWave');
 const { cache, cacheKey, getOrSet } = require('../services/cache.service');
@@ -34,14 +37,10 @@ const BALANCE_FIELDS =
   'destination name number operator amount noticeNumber amountDaen date isConfirmed status createdAt user';
 const USER_FIELDS = 'name email number role balance card';
 const PENDING_STATUSES = ['جاري التسديد', 'بدء التسديد'];
+const CUSTOMER_PATHS = new Set(['/user/confirmed', '/user/pending', '/astalam']);
+router.use(authMiddleware, (req, res, next) => CUSTOMER_PATHS.has(req.path) ? next() : requireAdmin(req, res, next));
 const FINAL_STATUSES = ['تم التسديد', 'غير مسددة'];
-const PROVIDER_MANAGED_PENDING_EXCLUSIONS = [
-  { 'extra.provider': 'prowave', 'extra.operation_type': 'direct_topup' },
-  {
-    'extra.provider': 'prowave',
-    'extra.prowave_operation_type': 'direct_topup',
-  },
-];
+const PROVIDER_MANAGED_PENDING_EXCLUSIONS = [{ 'extra.provider': { $in: ['prowave', 'alragheb', 'aleso'] } }];
 const ADMIN_PENDING_PAYMENT_FILTER = {
   status: { $in: PENDING_STATUSES },
   $nor: PROVIDER_MANAGED_PENDING_EXCLUSIONS,
@@ -144,10 +143,7 @@ const getPaymentOperationType = (payment = {}) => {
   return 'تسديد خدمة';
 };
 
-const isProviderManagedDirectTopUpPayment = (payment = {}) =>
-  payment.extra?.provider === 'alragheb' || payment.extra?.provider === 'prowave' &&
-  (payment.extra?.operation_type === 'direct_topup' ||
-    payment.extra?.prowave_operation_type === 'direct_topup');
+const isProviderManagedDirectTopUpPayment = isProviderManaged;
 
 const emitPendingPayments = async (req) => {
   const io = req.app.get('io');
@@ -176,53 +172,17 @@ router.get('/pending', authMiddleware, async (req, res) => {
 });
 
 router.patch('/confirm/:id', async (req, res) => {
-  const { id } = req.params;
-  const original = await InternetPayment.findById(id).lean();
-  if (!original) {
-    return res.status(404).json({ message: 'العملية غير موجودة' });
-  }
-
-  if (isProviderManagedDirectTopUpPayment(original)) {
-    return res.status(400).json({ message: PROVIDER_MANAGED_PAYMENT_MESSAGE });
-  }
-
-  const updated = await InternetPayment.findByIdAndUpdate(
-    id,
-    { status: 'تم التسديد' },
-    { new: true }
-  ).lean();
-  if (original && updated) {
-    await recordPaymentStats(original, -1);
-    await recordPaymentStats(updated, 1);
-  }
-  await invalidateReports();
-  await emitPendingPayments(req);
-  res.json(sanitizePaymentStatusForResponse(updated));
+  try {
+    const payment = await transitionManualPayment({ id: req.params.id, target: 'تم التسديد', actorId: req.user.id });
+    await emitPendingPayments(req); res.json(sanitizePaymentStatusForResponse(payment.toObject()));
+  } catch (error) { res.status(error.status || 500).json({ message: error.status ? error.message : 'تعذر تأكيد العملية', code: error.code }); }
 });
 
 router.patch('/start/:id', async (req, res) => {
-  const { id } = req.params;
-  const original = await InternetPayment.findById(id).lean();
-  if (!original) {
-    return res.status(404).json({ message: 'العملية غير موجودة' });
-  }
-
-  if (isProviderManagedDirectTopUpPayment(original)) {
-    return res.status(400).json({ message: PROVIDER_MANAGED_PAYMENT_MESSAGE });
-  }
-
-  const updated = await InternetPayment.findByIdAndUpdate(
-    id,
-    { status: 'بدء التسديد' },
-    { new: true }
-  ).lean();
-  if (original && updated) {
-    await recordPaymentStats(original, -1);
-    await recordPaymentStats(updated, 1);
-  }
-  await invalidateReports();
-  await emitPendingPayments(req);
-  res.json(sanitizePaymentStatusForResponse(updated));
+  try {
+    const payment = await transitionManualPayment({ id: req.params.id, target: 'بدء التسديد', actorId: req.user.id });
+    await emitPendingPayments(req); res.json(sanitizePaymentStatusForResponse(payment.toObject()));
+  } catch (error) { res.status(error.status || 500).json({ message: error.status ? error.message : 'تعذر بدء العملية', code: error.code }); }
 });
 
 router.get('/user/confirmed', authMiddleware, async (req, res) => {
@@ -279,7 +239,7 @@ router.get('/user/confirmed', authMiddleware, async (req, res) => {
     ]);
 
     const paymentWithType = payments.map((p) => ({
-      ...p,
+      ...customerPayment(p),
       landline: String(p.landline || ''),
       status: normalizePaymentStatusLabel(p.status),
       operationType: getPaymentOperationType(p),
@@ -355,7 +315,7 @@ router.put('/payment/:id', async (req, res) => {
     }
 
     const original = await InternetPayment.findById(id).lean();
-    if (original?.extra?.provider === 'alragheb') {
+    if (isProviderManaged(original)) {
       return res.status(400).json({ message: 'عملية Alragheb تدار من سجل المزوّد ولا يتغير نوع دفعها' });
     }
     const updatedPayment = await InternetPayment.findByIdAndUpdate(
@@ -417,7 +377,7 @@ router.get('/user/allconfirmed', authMiddleware, async (req, res) => {
 // تأكيد العملية وإضافة المبلغ إلى المستخدم
 router.post('/confirm-payment', async (req, res) => {
   try {
-    const result = await confirmPaymentService(req.body);
+    const result = await confirmPaymentService({ ...req.body, actorId: req.user.id });
     res.status(200).json(result);
   } catch (error) {
     console.error('خطأ أثناء تأكيد الدفعة:', error);
@@ -441,7 +401,7 @@ router.get('/user/pending', authMiddleware, async (req, res) => {
       .sort({ createdAt: -1 })
       .lean();
 
-    res.json(sanitizePaymentsStatusForResponse(payments));
+    res.json(sanitizePaymentsStatusForResponse(payments.map(customerPayment)));
   } catch (error) {
     console.error('فشل في جلب عمليات المستخدم:', error);
     res.status(500).json({ message: 'حدث خطأ في الخادم' });
@@ -451,52 +411,14 @@ router.get('/user/pending', authMiddleware, async (req, res) => {
 // routes/admin.js
 router.post('/reject/:id', async (req, res) => {
   try {
-    const { reason, email } = req.body;
-    const paymentId = req.params.id;
-    const payment = await InternetPayment.findById(paymentId).lean();
-    if (!payment) {
-      return res.status(404).json({ message: 'العملية غير موجودة' });
-    }
-
-    if (isProviderManagedDirectTopUpPayment(payment)) {
-      return res
-        .status(400)
-        .json({ message: PROVIDER_MANAGED_PAYMENT_MESSAGE });
-    }
-
-    // 1. تحديث العملية إلى "غير مسددة" مع سبب
-    const updatedPayment = await InternetPayment.findByIdAndUpdate(
-      paymentId,
-      {
-        status: 'غير مسددة',
-        note: reason,
-      },
-      { new: true }
-    ).lean();
-
-    // 2. إرجاع الرصيد للمستخدم
-    const user = await User.findOne({ email });
-    if (user) {
-      const Amount = payment.calculatedAmount;
-      await User.updateOne({ _id: user._id }, { $inc: { balance: Amount } });
-    }
-    req.io.emit('json_message', true);
-    if (payment && updatedPayment) {
-      await recordPaymentStats(payment, -1);
-      await recordPaymentStats(updatedPayment, 1);
-    }
-    await invalidateReports();
+    const result = await refundManualPayment({ id: req.params.id, reason: req.body.reason, actorId: req.user.id });
+    req.io?.to('admins').emit('json_message', true);
     await emitPendingPayments(req);
-
-    res.status(200).json({ message: 'تم الرفض وإرجاع الرصيد' });
-  } catch (err) {
-    console.error(err);
-    res.status(500).json({ message: 'حدث خطأ أثناء الرفض' });
-  }
+    res.json({ message: result.duplicate ? 'الرصيد معاد سابقًا' : 'تم الرفض وإرجاع الرصيد لصاحب العملية', duplicate: result.duplicate });
+  } catch (error) { res.status(error.status || 500).json({ message: error.status ? error.message : 'تعذر رفض العملية', code: error.code }); }
 });
 
-//جلب جميع المستخدمين
-router.get('/all-user', authMiddleware, async (req, res) => {
+router.get('/all-user', authMiddleware, requireAdmin, async (req, res) => {
   try {
     const allUser = await getOrSet(cacheKey('users:all', req.query), 120, () =>
       User.find().select(USER_FIELDS).sort({ name: 1 }).lean()
@@ -729,7 +651,7 @@ router.get('/newPosBalanceReport', async (req, res) => {
   }
 });
 
-router.delete('/deleteuser/:id', async (req, res) => {
+router.delete('/deleteuser/:id', authMiddleware, requireAdmin, async (req, res) => {
   const id = req.params.id;
   try {
     await User.findByIdAndDelete({ _id: id });
@@ -741,53 +663,38 @@ router.delete('/deleteuser/:id', async (req, res) => {
 });
 
 router.put('/addbatch/:id', async (req, res) => {
-  const id = req.params.id;
-  const batch = req.body.amount;
-
   try {
-    const balanceDaen = await Balance.findOne({}).sort({ _id: -1 });
-
-    const daenamount = balanceDaen.amountDaen;
-    console.log(daenamount);
-    if (daenamount > 1200000) {
-      return res
-        .status(401)
-        .json('لا يمكن اضافة دفعة جديدة لان المبلغ المستحق اكثر من المليون');
-    }
-    const newUser = await User.findById({ _id: id });
-    const newBalance = await new Balance({
-      name: newUser.email,
-      amount: batch,
-      isConfirmed: true,
-      destination: 'nader daher',
-      operator: 'nader daher',
-      noticeNumber: 1,
-      number: '0966248984',
-      amountDaen: daenamount + batch,
-      status: false,
-      date: Date.now(),
-      user: newUser._id,
+    const id = req.params.id, key = req.body.client_request_id;
+    if (!/^[a-f0-9]{24}$/i.test(id) || typeof key !== 'string' || !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(key)) return res.status(400).json({ message: 'معرف الحساب والمحاولة مطلوبان' });
+    const total = sypAmount(req.body.amount);
+    const result = await atomic(async (session) => {
+      const previous = await Balance.findOne({ user: id, clientRequestId: key }).session(session);
+      if (previous) {
+        if (sypAmount(previous.amount) !== total) throw Object.assign(new Error('معرف المحاولة مستخدم لمبلغ مختلف'), { status: 409 });
+        return { duplicate: true, depositId: previous._id };
+      }
+      const user = await User.findById(id).session(session);
+      if (!user) throw Object.assign(new Error('الحساب غير موجود'), { status: 404 });
+      const latest = await Balance.findOne({}).sort({ _id: -1 }).session(session);
+      const debt = new Decimal(latest?.amountDaen || 0);
+      if (debt.plus(total).gt(1200000)) throw Object.assign(new Error('تجاوز حد الرصيد المستحق'), { status: 409 });
+      const credited = await User.findOneAndUpdate({ _id: id, balance: { $lte: new Decimal(MAX_WALLET).minus(total).toNumber() } }, walletAdjustment(total), { new: true, session });
+      if (!credited) throw Object.assign(new Error('تجاوز حد المحفظة'), { status: 409 });
+      const [deposit] = await Balance.create([{ user: id, name: user.email, amount: Number(total), isConfirmed: true, confirmedAt: new Date(), confirmedBy: req.user.id, clientRequestId: key, destination: req.user.email, operator: req.user.email, amountDaen: debt.plus(total).toNumber(), status: false }], { session });
+      await WalletAdjustment.create([{ key: 'admin-credit:'+id+':'+key, user: id, actor: req.user.id, source: 'admin_credit', sourceId: deposit._id, amountSyp: total, balanceBeforeSyp: new Decimal(user.balance || 0).toFixed(2), balanceAfterSyp: new Decimal(credited.balance).toFixed(2), note: 'دفعة إدارية موثقة' }], { session });
+      await recordBalanceStats(deposit, 1, session);
+      return { duplicate: false, depositId: deposit._id };
     });
-
-    await newBalance.save();
-    await recordBalanceStats(newBalance, 1);
-    await User.findByIdAndUpdate(
-      { _id: id },
-      { $inc: { balance: Number(batch) } },
-      { new: true }
-    );
-    await invalidateReports();
-    res.status(201).json('تم اضافة الدفعة بنجاح');
-  } catch (err) {
-    res.status(401).json(err);
-  }
+    await invalidateReports(); res.status(result.duplicate ? 200 : 201).json({ message: result.duplicate ? 'الدفعة مضافة سابقًا' : 'تمت إضافة الدفعة', ...result });
+  } catch (error) { res.status(error.status || 500).json({ message: error.status ? error.message : 'تعذر إضافة الدفعة' }); }
 });
 
-//حذف دفعة
 router.delete('/delete/:id', async (req, res) => {
   const id = req.params.id;
   try {
-    const deleted = await Balance.findByIdAndDelete({ _id: id }).lean();
+    const original = await Balance.findById(id).lean();
+    if (original?.isConfirmed) return res.status(409).json({ message: 'الدفعة المؤكدة سجل مالي ولا يمكن حذفها' });
+    const deleted = await Balance.findOneAndDelete({ _id: id, isConfirmed: { $ne: true } }).lean();
     if (deleted) await recordBalanceStats(deleted, -1);
     await invalidateReports();
     res.status(201).json('delete done');
@@ -797,7 +704,7 @@ router.delete('/delete/:id', async (req, res) => {
   }
 });
 
-router.get('/user/:id', authMiddleware, async (req, res) => {
+router.get('/user/:id', authMiddleware, requireAdmin, async (req, res) => {
   const id = req.params.id;
   try {
     const updateUser = await User.findById(id).select(USER_FIELDS).lean();
@@ -806,10 +713,13 @@ router.get('/user/:id', authMiddleware, async (req, res) => {
     res.status(401).json(err);
   }
 });
-router.put('/updateuser/:id', async (req, res) => {
+router.put('/updateuser/:id', authMiddleware, requireAdmin, async (req, res) => {
   const id = req.params.id;
   try {
-    const updateUser = await User.findByIdAndUpdate(id, req.body, {
+    const fields = Object.fromEntries(['name', 'email', 'number', 'role', 'card'].filter(key => Object.hasOwn(req.body, key)).map(key => [key, req.body[key]]));
+    if (Object.hasOwn(req.body, 'balance')) return res.status(400).json({ message: 'تعديل الرصيد يتم بإجراء مالي موثق، وليس بتحرير بيانات الحساب' });
+    if (fields.role && !['admin', 'user', 'user-point'].includes(fields.role)) return res.status(400).json({ message: 'صلاحية الحساب غير صالحة' });
+    const updateUser = await User.findByIdAndUpdate(id, { $set: fields, $inc: { authVersion: 1 } }, {
       new: true,
     })
       .select(USER_FIELDS)
@@ -828,7 +738,7 @@ router.post('/astalam', (req, res) => {
   let fatoraDataMap = {}; // مفتاح = البريد الإلكتروني، القيمة = بيانات الفاتورة
 
   const data = req.body;
-  const { email } = req.body;
+  const email = req.user.email;
 
   // if (!selectedCompany || !landline) {
   //   return res.status(400).json({ error: "يرجى إدخال الشركة والرقم الأرضي" });
@@ -837,7 +747,7 @@ router.post('/astalam', (req, res) => {
   fatoraDataMap[email] = data;
 
   // إرسال البيانات لكل العملاء المتصلين عبر socket.io
-  req.io.emit('fatoraUpdated', fatoraDataMap[email]);
+  req.io?.to(email).emit('fatoraUpdated', fatoraDataMap[email]);
 
   res.status(201).json({ message: 'تم الاستعلام وحفظ البيانات' });
 });
@@ -876,36 +786,23 @@ router.get('/daen', authMiddleware, async (req, res) => {
 });
 
 router.post('/confirm-daen', async (req, res) => {
-  const { id } = req.body;
   try {
-    // ابحث عن الدفعة المطلوبة
-    const payment = await Balance.findById(id);
-
-    if (!payment) {
-      return res.status(404).json({ message: 'لم يتم العثور على الدفعة' });
-    }
-
-    // ابحث عن المستخدم
-    const user = await User.findOne({ email: payment.name });
-    if (!user) {
-      return res.status(404).json({ message: 'المستخدم غير موجود' });
-    }
-
-    payment.status = true;
-    const lastBalance = await Balance.findOneAndUpdate(
-      {},
-      { $inc: { amountDaen: -payment.amount } },
-      { sort: { _id: -1 }, new: true }
-    );
-    await payment.save();
-    await recordBalanceStats(payment, 1);
-    await invalidateReports();
-
-    res.status(200).json({ success: true, message: 'تم تحديث رصيد المستخدم' });
-  } catch (error) {
-    console.error('خطأ أثناء تأكيد الدفعة:', error);
-    res.status(500).json({ message: 'حدث خطأ أثناء معالجة الطلب' });
-  }
+    const id = req.body.id;
+    if (!/^[a-f0-9]{24}$/i.test(id || '')) return res.status(400).json({ message: 'معرف الدفعة غير صالح' });
+    const result = await atomic(async (session) => {
+      const payment = await Balance.findById(id).session(session);
+      if (!payment) throw Object.assign(new Error('الدفعة غير موجودة'), { status: 404 });
+      if (payment.status) return { duplicate: true };
+      if (!payment.isConfirmed) throw Object.assign(new Error('الدفعة غير مؤكدة'), { status: 409 });
+      const total = Number(sypAmount(payment.amount));
+      const latest = await Balance.findOne({}).sort({ _id: -1 }).session(session);
+      if (!latest || new Decimal(latest.amountDaen || 0).lt(total)) throw Object.assign(new Error('السجل المالي بحاجة للمراجعة'), { status: 409 });
+      payment.status = true; await payment.save({ session });
+      await Balance.updateOne({ _id: latest._id }, { $inc: { amountDaen: -total } }, { session });
+      return { duplicate: false };
+    });
+    await invalidateReports(); res.json({ success: true, message: 'تم تأكيد تسوية الدفعة', ...result });
+  } catch (error) { res.status(error.status || 500).json({ message: error.status ? error.message : 'تعذر تسوية الدفعة' }); }
 });
 router.get('/payments/bydate', authMiddleware, async (req, res) => {
   try {

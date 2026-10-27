@@ -17,6 +17,13 @@ const PricingRule = require('../models/AlraghebPricingRule');
 const DailyStats = require('../models/DailyStats');
 const Balance = require('../models/Balance');
 const Point = require('../models/Point');
+const WalletAdjustment = require('../models/WalletAdjustment');
+const RuleAudit = require('../models/AlraghebPricingRuleAudit');
+const ProviderSettings = require('../models/ProviderIntegrationSettings');
+const ProviderAudit = require('../models/ProviderIntegrationAudit');
+const WorkerHealth = require('../models/ProviderWorkerHealth');
+const integrationModels = [User, Payment, Quote, Config, Transaction, Audit, PricingBatch, PricingRule, DailyStats, Balance, Point,
+  WalletAdjustment, RuleAudit, ProviderSettings, ProviderAudit, WorkerHealth];
 
 test('SYP pricing and strict quantity contracts', () => {
   assert.equal(pricing.calculate('0.2', 2500, 1).totalSyp, '500.00');
@@ -69,7 +76,7 @@ test('purchase integration on an isolated replica set (no live provider orders)'
   t.after(async () => {
     try {
       if (mongoose.connection.readyState === 1 && mongoose.connection.name === dbName) {
-        for (const model of [User, Payment, Quote, Config, Transaction, Audit, PricingBatch, PricingRule, DailyStats, Balance, Point]) await model.deleteMany({});
+        for (const model of integrationModels) await model.deleteMany({});
       }
     } finally {
       await mongoose.disconnect();
@@ -79,27 +86,30 @@ test('purchase integration on an isolated replica set (no live provider orders)'
   if (!external) db = await MongoMemoryReplSet.create({ binary: { version: '7.0.34' }, replSet: { count: 1 }, instanceOpts: [{ ip: '127.0.0.1' }] });
   await mongoose.connect(external || db.getUri(), { dbName, serverSelectionTimeoutMS: 15000 });
   assert.equal(mongoose.connection.name, dbName);
-  for (const model of [User, Payment, Quote, Config, Transaction, Audit, PricingBatch, PricingRule, DailyStats, Balance, Point]) await model.init();
+  for (const model of integrationModels) await model.init();
   async function fixture(balance = 1000) {
-    for (const model of [User, Payment, Quote, Config, Transaction, Audit, PricingBatch, PricingRule, DailyStats, Balance, Point]) await model.deleteMany({});
+    for (const model of integrationModels) await model.deleteMany({});
     const user = await User.create({ email: 'buyer@example.invalid', balance, role: 'user' });
     const other = await User.create({ email: 'other@example.invalid', balance: 1000, role: 'user' });
     const raw = { id: 57, name: 'Test chat', parent_id: 1, params: ['Account ID'], product_type: 'amount', available: true,
       qty_values: { min: 1000, max: 10000 }, price: '0.2', base_price: '101' };
     let outcome = 'accept';
     let checking = 'accept';
+    let replay = ['Delivered'];
     const calls = [];
     const dependencies = { readCatalog: async () => ({ products: [catalog.normalizeProduct(raw, 1)], categories: [{ id: 1, parent_id: 0, name: 'Chat' }] }), client: {
       getProduct: async () => raw,
       newOrder: async (id, qty, params, uuid) => { calls.push({ id, qty, params, uuid }); if (outcome === 'timeout') throw new Error('simulated network interruption');
-        return { status: 'OK', data: { order_id: 'provider-1', status: outcome, price: '500', replay_api: ['Delivered'] } }; },
+        if (outcome === 'not_sent') throw Object.assign(new Error('Connection not established'), { status: 502, code: 'ALRAGHEB_UNAVAILABLE', requestOutcome: 'not_sent' });
+        if (outcome === 'provider_error') throw Object.assign(new Error('Unconfirmed provider error'), { status: 502, code: 'ALRAGHEB_PROVIDER_ERROR' });
+        return { status: 'OK', data: { order_id: 'provider-1', status: outcome, price: '500', replay_api: replay } }; },
       checkOrder: async () => ({ status: 'OK', data: checking === 'empty' ? [] : [{ order_id: 'provider-1', status: checking, price: '500' }] }),
     } };
     const service = createOrderService(dependencies);
     await service.saveConfig(user._id, 57, { purchaseEnabled: true, billingUnitQty: 1, fieldSchema: [{ key: 'playerId', required: true }], note: 'Isolated provider contract', revision: 0 });
     const quote = () => service.createQuote(String(user._id), { product_id: 57, qty: 2500, params: { playerId: '001234' } });
     const buy = async (q, id = randomUUID()) => service.submit(String(user._id), { quote_id: q.quote_id, client_request_id: id });
-    return { service, restart: () => createOrderService(dependencies), user, other, raw, calls, quote, buy, outcome: (v) => { outcome = v; }, checking: (v) => { checking = v; }, balance: async () => (await User.findById(user._id)).balance };
+    return { service, client: dependencies.client, restart: () => createOrderService(dependencies), user, other, raw, calls, quote, buy, outcome: (v) => { outcome = v; }, checking: (v) => { checking = v; }, replay: (v) => { replay = v; }, balance: async () => (await User.findById(user._id)).balance };
   }
   await t.test('quote and successful order preserve price, quantity, account and one debit', async () => {
     const f = await fixture(); const q = await f.quote();
@@ -153,10 +163,114 @@ test('purchase integration on an isolated replica set (no live provider orders)'
   });
   await t.test('timeout and empty check retain debit, later acceptance completes same UUID', async () => {
     const f = await fixture(); f.outcome('timeout'); const result = await f.buy(await f.quote());
-    assert.equal(result.status, 'pending'); f.checking('empty'); await f.service.processOrder(result.transaction_id);
-    assert.equal(await f.balance(), 500); assert.equal((await Transaction.findById(result.transaction_id)).status, 'pending');
+    assert.equal(result.status, 'unknown'); f.checking('empty'); await f.service.processOrder(result.transaction_id);
+    assert.equal(await f.balance(), 500); assert.equal((await Transaction.findById(result.transaction_id)).status, 'unknown');
     f.checking('accept'); await f.service.processOrder(result.transaction_id);
     assert.equal((await Transaction.findById(result.transaction_id)).status, 'completed'); assert.equal(f.calls.length, 1);
+  });
+  await t.test('a request proven not sent remains queued and can dispatch safely later', async () => {
+    const f = await fixture(); f.outcome('not_sent'); const result = await f.buy(await f.quote());
+    const failed = await Transaction.findById(result.transaction_id);
+    assert.equal(result.status, 'pending'); assert.equal(failed.phase, 'queued');
+    assert.equal(failed.errorHistory[0].outcome, 'not_sent'); assert.equal(await f.balance(), 500);
+    f.outcome('accept'); await f.service.processOrder(result.transaction_id);
+    assert.equal((await Transaction.findById(result.transaction_id)).status, 'completed');
+    assert.equal(await f.balance(), 500); assert.equal(await Payment.countDocuments(), 1);
+  });
+  await t.test('ambiguous error history survives checks and aged uncertainty becomes manual review without resend or refund', async () => {
+    const f = await fixture(); f.outcome('provider_error'); const result = await f.buy(await f.quote()); f.checking('empty');
+    await Transaction.collection.updateOne({ _id: new mongoose.Types.ObjectId(result.transaction_id) }, { $set: { createdAt: new Date(Date.now() - 3600000), nextCheckAt: new Date(0), leaseUntil: new Date(0) } });
+    await f.restart().reconcile();
+    const order = await Transaction.findById(result.transaction_id);
+    assert.equal(order.status, 'manual_review'); assert.equal(order.phase, 'checking');
+    assert.equal(order.errorHistory[0].code, 'ALRAGHEB_PROVIDER_ERROR');
+    assert.equal(order.errorHistory[1].code, 'ORDER_UNCONFIRMED');
+    assert.equal(f.calls.length, 1); assert.equal(await f.balance(), 500); assert.equal(order.refundedAt, undefined);
+  });
+  await t.test('a crash in the sending window becomes visible uncertainty and never resubmits blindly', async () => {
+    const f = await fixture(); f.outcome('timeout'); const result = await f.buy(await f.quote()); f.checking('empty');
+    await Transaction.updateOne({ _id: result.transaction_id }, { $set: { phase: 'sending', leaseUntil: new Date(0) } });
+    await f.restart().processOrder(result.transaction_id);
+    const order = await Transaction.findById(result.transaction_id);
+    assert.equal(order.status, 'unknown'); assert.equal(order.phase, 'checking'); assert.equal(f.calls.length, 1);
+    assert.equal(await f.balance(), 500);
+  });
+  await t.test('documented support resolution requires manual review, matching evidence and refunds atomically once', async () => {
+    const f = await fixture(); f.outcome('timeout'); const result = await f.buy(await f.quote()); f.checking('empty');
+    let order = await Transaction.findById(result.transaction_id).lean();
+    const resolution = () => ({ action: 'resolve_failed', note: 'Provider support confirmed that the order was never created', isAdmin: true, actorId: String(f.user._id), revision: order.__v,
+      providerEvidence: { source: 'provider_support', providerReference: order.orderUuid, confirmedOutcome: 'rejected', checkedAt: new Date().toISOString(), ticketReference: 'audit-support-ticket' } });
+    await assert.rejects(f.service.resolveTransaction(result.transaction_id, resolution()), { code: 'ORDER_UNCONFIRMED' });
+    await Transaction.updateOne({ _id: order._id }, { $set: { status: 'manual_review' }, $inc: { __v: 1 } });
+    order = await Transaction.findById(order._id).lean();
+    await assert.rejects(f.service.resolveTransaction(result.transaction_id, { ...resolution(), providerEvidence: { ...resolution().providerEvidence, providerReference: 'wrong-order' } }), { code: 'INVALID_EVIDENCE' });
+    const outcomes = await Promise.allSettled([f.service.resolveTransaction(result.transaction_id, resolution()), f.service.resolveTransaction(result.transaction_id, resolution())]);
+    assert.ok(outcomes.some((item) => item.status === 'fulfilled'));
+    assert.equal(await f.balance(), 1000); assert.equal((await Transaction.findById(order._id)).status, 'refunded');
+    assert.equal(await ProviderAudit.countDocuments({ action: 'resolve_failed' }), 1);
+    await f.service.resolveTransaction(result.transaction_id, resolution()); assert.equal(await f.balance(), 1000);
+  });
+  await t.test('support evidence cannot override a contradictory provider result or stale order revision', async () => {
+    const f = await fixture(); f.outcome('wait'); const result = await f.buy(await f.quote());
+    await Transaction.updateOne({ _id: result.transaction_id }, { $set: { status: 'manual_review' }, $inc: { __v: 1 } });
+    const order = await Transaction.findById(result.transaction_id).lean(); f.checking('wait');
+    const body = { action: 'resolve_failed', note: 'Reviewed provider support response for this order', isAdmin: true, actorId: String(f.user._id), revision: order.__v,
+      providerEvidence: { source: 'provider_support', providerReference: order.orderUuid, confirmedOutcome: 'rejected', checkedAt: new Date().toISOString(), ticketReference: 'support-ticket' } };
+    await assert.rejects(f.service.resolveTransaction(result.transaction_id, { ...body, revision: body.revision - 1 }), { code: 'ORDER_CHANGED' });
+    await assert.rejects(f.service.resolveTransaction(result.transaction_id, body), { code: 'PROVIDER_EVIDENCE_CONFLICT' });
+    assert.equal(await f.balance(), 500); assert.equal(await ProviderAudit.countDocuments(), 0);
+  });
+  await t.test('manual resolution rolls back refund and payment settlement if its audit cannot be stored', async (t) => {
+    const f = await fixture(); f.outcome('timeout'); const result = await f.buy(await f.quote()); f.checking('empty');
+    await Transaction.updateOne({ _id: result.transaction_id }, { $set: { status: 'manual_review' }, $inc: { __v: 1 } });
+    const order = await Transaction.findById(result.transaction_id).lean();
+    const mock = t.mock.method(ProviderAudit, 'create', async () => { throw new Error('Audit write failed'); });
+    await assert.rejects(f.service.resolveTransaction(result.transaction_id, { action: 'resolve_failed', isAdmin: true, actorId: String(f.user._id), revision: order.__v,
+      note: 'Reviewed written confirmation that no provider order exists', providerEvidence: { source: 'provider_support', providerReference: order.orderUuid,
+        confirmedOutcome: 'rejected', checkedAt: new Date().toISOString(), ticketReference: 'support-confirmation' } }));
+    mock.mock.restore();
+    assert.equal(await f.balance(), 500); assert.equal((await Transaction.findById(order._id)).status, 'manual_review');
+    assert.equal((await Payment.findById(result.payment_id)).status, 'قيد التنفيذ');
+    assert.equal(await ProviderAudit.countDocuments(), 0);
+  });
+  await t.test('fulfillment longer than 4000 characters is preserved in full', async () => {
+    const f = await fixture(); const delivered = ['code:'.repeat(1800), 'FINAL-DELIVERY-VALUE']; f.replay(delivered);
+    const result = await f.buy(await f.quote());
+    assert.equal(result.result, JSON.stringify(delivered)); assert.ok(result.result.includes('FINAL-DELIVERY-VALUE'));
+    assert.equal(result.status, 'completed');
+  });
+  await t.test('durable purchase stop blocks new quotes and unsent dispatch while allowing pending checks', async () => {
+    const f = await fixture(); f.outcome('not_sent'); const result = await f.buy(await f.quote());
+    await ProviderSettings.create({ provider: 'alragheb', purchaseEnabled: false });
+    await assert.rejects(f.quote(), { code: 'PURCHASE_DISABLED' });
+    const [stopped] = await f.service.decorateProducts([catalog.normalizeProduct(f.raw, 1)]);
+    assert.equal(stopped.purchasable, false); assert.equal(stopped.purchase_status, 'purchase_disabled');
+    f.outcome('accept'); await f.service.processOrder(result.transaction_id); assert.equal(f.calls.length, 1);
+    assert.equal((await Transaction.findById(result.transaction_id)).phase, 'queued');
+    await ProviderSettings.updateOne({ provider: 'alragheb' }, { $set: { purchaseEnabled: true } });
+    await f.service.processOrder(result.transaction_id); assert.equal((await Transaction.findById(result.transaction_id)).status, 'completed');
+  });
+  await t.test('reconciliation checks several orders concurrently within the configured bound', async () => {
+    const f = await fixture(10000); f.outcome('wait');
+    for (let i = 0; i < 6; i++) await f.buy(await f.quote());
+    await Transaction.updateMany({}, { $set: { nextCheckAt: new Date(0), leaseUntil: new Date(0) } });
+    let active = 0, maximum = 0;
+    f.client.checkOrder = async () => {
+      active++; maximum = Math.max(maximum, active);
+      await new Promise((resolve) => setTimeout(resolve, 15)); active--;
+      return { status: 'OK', data: [{ order_id: 'provider-1', status: 'wait', price: '500' }] };
+    };
+    assert.equal(await f.service.reconcile(), 6); assert.equal(maximum, 3);
+    assert.equal(await f.balance(), 7000); assert.equal(f.calls.length, 6);
+  });
+  await t.test('a waiting response cannot erase an aging review applied while the provider check was running', async () => {
+    const f = await fixture(); f.outcome('wait'); const result = await f.buy(await f.quote());
+    f.client.checkOrder = async () => {
+      await Transaction.updateOne({ _id: result.transaction_id }, { $set: { status: 'manual_review', reviewReason: 'ORDER_AGE_EXCEEDED' }, $inc: { __v: 1 } });
+      return { status: 'OK', data: [{ order_id: 'provider-1', status: 'wait', price: '500' }] };
+    };
+    await f.service.processOrder(result.transaction_id);
+    assert.equal((await Transaction.findById(result.transaction_id)).status, 'manual_review'); assert.equal(await f.balance(), 500);
   });
   await t.test('wait then reject refunds once under concurrent workers', async () => {
     const f = await fixture(); f.outcome('wait'); const result = await f.buy(await f.quote());
@@ -204,7 +318,7 @@ test('purchase integration on an isolated replica set (no live provider orders)'
       return original.call(this, filter, update, options);
     });
     const result = await f.buy(await f.quote());
-    assert.equal(result.status, 'pending'); assert.equal(await f.balance(), 500);
+    assert.equal(result.status, 'unknown'); assert.equal(await f.balance(), 500);
     mocked.mock.restore(); f.checking('reject'); await f.service.processOrder(result.transaction_id);
     assert.equal(await f.balance(), 1000); assert.equal((await Transaction.findById(result.transaction_id)).status, 'refunded');
   });
@@ -246,7 +360,7 @@ test('purchase integration on an isolated replica set (no live provider orders)'
     await Balance.create({ user: f.user._id, amountDaen: 0, amount: 0 });
     const url = await serve(t, '/point', require('../routes/point'));
     const [result, response] = await Promise.all([f.buy(q), fetch(`${url}/point/add-balance/${point._id}`, {
-      method: 'PUT', headers: { 'Content-Type': 'application/json' },
+      method: 'PUT', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${require('jsonwebtoken').sign({ id: String(f.user._id), role: 'user' }, process.env.JWT_SECRET)}` },
       body: JSON.stringify({ amount: 250, email: f.user.email, username: f.other.email, owner: 'test' }),
     })]);
     assert.equal(result.status, 'completed'); assert.ok(response.ok); assert.equal(await f.balance(), 250);
@@ -354,7 +468,10 @@ test('purchase integration on an isolated replica set (no live provider orders)'
   });
   await t.test('category pricing rules are saved and can prefill new product approvals', async () => {
     const f = await fixture();
-    const rule = await f.service.savePricingRule(f.user._id, 1, { markupPercent: '5', markupFixedSyp: '0', note: 'Chat applications default profit' });
+    const ruleBody = { markupPercent: '5', markupFixedSyp: '0', note: 'Chat applications default profit', revision: 0 };
+    const rule = await f.service.savePricingRule(f.user._id, 1, ruleBody);
+    await assert.rejects(f.service.savePricingRule(f.user._id, 1, ruleBody), { code: 'RULE_CHANGED' });
+    assert.equal(await RuleAudit.countDocuments(), 1);
     assert.equal(rule.rule.markup_percent, '5');
     assert.equal(rule.product_count, 1);
     const listed = await f.service.listPricingRules();

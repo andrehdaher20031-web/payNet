@@ -3,6 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const router = express.Router();
 const authMiddleware = require('../middleware/auth');
+const requireAdmin = require('../middleware/requireAdmin');
+router.use(authMiddleware, requireAdmin);
 
 // Models to backup
 const User = require('../models/User');
@@ -42,7 +44,9 @@ router.post('/backup', authMiddleware, async (req, res) => {
         };
 
         for (const col of backupCollections) {
-            const docs = await col.model.find().lean();
+            const query = col.model.find();
+            if (col.name === 'users') query.select('+password +passwordHash +passwordScheme');
+            const docs = await query.lean();
             const outFile = path.join(snapshotDir, `${col.name}.json`);
             fs.writeFileSync(outFile, JSON.stringify(docs, null, 2), 'utf-8');
             meta.collections.push({
