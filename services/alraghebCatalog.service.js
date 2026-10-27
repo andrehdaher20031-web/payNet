@@ -195,6 +195,7 @@ const createCatalogService = ({ client = provider, storage = cache, now = Date.n
   let inFlight = null;
   let nextRetryAt = 0;
   let lastFailure = null;
+  let lastSyncedAt = null;
   const storageKey = () => snapshots?.namespace ? `${CACHE_KEY}:${snapshots.namespace()}` : CACHE_KEY;
   const usable = (value) => value && Array.isArray(value.products) && Array.isArray(value.categories) &&
     value.categories.some((category) => category.id === ROOT_ID) &&
@@ -268,6 +269,7 @@ const createCatalogService = ({ client = provider, storage = cache, now = Date.n
     }
     nextRetryAt = 0;
     lastFailure = null;
+    lastSyncedAt = catalog.synced_at;
     return catalog;
   };
 
@@ -286,6 +288,7 @@ const createCatalogService = ({ client = provider, storage = cache, now = Date.n
         } catch (error) { snapshotError(error); }
       }
     }
+    if (stored) lastSyncedAt = stored.synced_at;
     const fresh = stored && now() - Date.parse(stored.synced_at) < CACHE_SECONDS * 1000;
     if (fresh && !force) return stored;
     if (nextRetryAt > now() && !force) {
@@ -311,7 +314,16 @@ const createCatalogService = ({ client = provider, storage = cache, now = Date.n
     }
   };
 
-  return { getCatalog };
+  const getStatus = () => {
+    const retained = lastSyncedAt && now() - Date.parse(lastSyncedAt) < STALE_SECONDS * 1000;
+    const fresh = retained && now() - Date.parse(lastSyncedAt) < CACHE_SECONDS * 1000;
+    return {
+      state: inFlight ? retained ? 'refreshing' : 'loading' : lastFailure ? retained ? 'degraded' : 'unavailable' : fresh ? 'ready' : retained ? 'stale' : 'idle',
+      lastSyncedAt,
+      errorCode: lastFailure ? /^[A-Z][A-Z0-9_]{0,63}$/.test(lastFailure.code || '') ? lastFailure.code : 'CATALOG_UNAVAILABLE' : null,
+    };
+  };
+  return { getCatalog, getStatus };
 };
 
 module.exports = {

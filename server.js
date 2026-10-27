@@ -39,6 +39,7 @@ app.set('io', io); // مهم جداً
 // Middlewares
 app.use(cors());
 app.use(express.json());
+app.use('/api/health', require('./routes/healthRoutes'));
 app.use(require('./services/userActivity.service').observeRequests);
 app.use('/api/activity', require('./routes/activity'));
 app.use('/api/admin/user-monitoring', require('./routes/userMonitoring'));

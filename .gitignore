@@ -27,3 +27,6 @@ yarn-error.log
 # Project-specific (ignore if you do not want this file tracked)
 addUser.js
 password-reset*.json
+
+# Local backup repositories stay on disk, outside the main repository.
+/*payNet-main*نسخة*/

@@ -37,6 +37,7 @@ test('imports every descendant, de-duplicates concurrent refreshes and uses the 
   assert.deepEqual(setup.calls, [1, 13, 99]);
   await setup.service.getCatalog();
   assert.equal(setup.calls.length, 3);
+  assert.equal(setup.service.getStatus().state, 'ready');
 });
 
 test('loads prices once and traverses every nested category through lightweight indexes', async () => {
@@ -88,6 +89,7 @@ test('keeps a complete snapshot on partial provider failure and marks it stale',
   const stale = await setup.service.getCatalog();
   assert.equal(stale.stale, true);
   assert.equal(stale.products.length, 3);
+  assert.equal(setup.service.getStatus().state, 'degraded');
   await assert.rejects(setup.service.getCatalog({ force: true }));
 });
 
@@ -103,6 +105,7 @@ test('browsing returns the complete cached catalog immediately while one refresh
   assert.equal(browsing.products.length, 3);
   assert.equal(browsing.stale, true);
   assert.equal(browsing.refreshing, true);
+  assert.equal(setup.service.getStatus().state, 'refreshing');
   assert.equal(selectContent(browsing, 1).meta.refreshing, true);
   assert.equal(second.refreshing, true);
   const fresh = setup.service.getCatalog();
@@ -162,6 +165,8 @@ test('a cold failed refresh is shared and does not repeatedly hammer the provide
   await assert.rejects(service.getCatalog(), { code: 'ALRAGHEB_TIMEOUT' });
   await assert.rejects(service.getCatalog(), { code: 'ALRAGHEB_TIMEOUT' });
   assert.equal(calls, 1);
+  assert.equal(service.getStatus().state, 'unavailable');
+  assert.equal(service.getStatus().errorCode, 'ALRAGHEB_TIMEOUT');
   await assert.rejects(service.getCatalog({ force: true }), { code: 'ALRAGHEB_TIMEOUT' });
   assert.equal(calls, 2);
 });
