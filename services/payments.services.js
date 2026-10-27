@@ -47,7 +47,7 @@ const refundManualPayment = async ({ id, reason, actorId }) => {
     const existing = await WalletAdjustment.findOne({ key: `manual-refund:${id}` }).session(session);
     if (existing || payment.extra?.manual_refunded_at) return { duplicate: true, payment };
     if (!['جاري التسديد', 'بدء التسديد'].includes(payment.status)) throw moneyError('يمكن رفض العملية المعلقة فقط', 409, 'PAYMENT_FINAL');
-    const total = sypAmount(payment.calculatedAmount);
+    const total = sypAmount(payment.calculatedAmount ?? payment.amount);
     const owner = await User.findById(payment.user).session(session);
     if (!owner) throw moneyError('صاحب العملية غير موجود', 409, 'PAYMENT_OWNER_MISSING');
     const before = payment.toObject();

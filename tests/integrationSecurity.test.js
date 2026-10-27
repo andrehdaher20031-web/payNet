@@ -113,6 +113,47 @@ test('financial boundaries, current permissions and socket privacy on an isolate
     assert.equal((await Payment.findById(payment._id)).status, 'غير مسددة');
   });
 
+  await t.test('manual rejection refunds the stored amount when calculatedAmount is missing or null', async () => {
+    const customer = await User.create({ email: 'refund-fallback@security.invalid', role: 'user', balance: 25 });
+    let expectedBalance = 25;
+    for (const fields of [{ amount: 12.5 }, { amount: 7.25, calculatedAmount: null }]) {
+      const payment = await Payment.create({ user: customer._id, email: customer.email, status: 'جاري التسديد', ...fields });
+      const reject = () => request('/api/admin/reject/' + payment._id, admin, 'POST', {
+        reason: 'Invalid account information', amount: 999999, email: other.email,
+      });
+      const results = await Promise.all(Array.from({ length: 3 }, reject));
+      for (const result of results) assert.equal(result.status, 200);
+      const responses = await Promise.all(results.map(result => result.json()));
+      assert.equal(responses.filter(result => !result.duplicate).length, 1);
+      expectedBalance += fields.amount;
+      assert.equal((await User.findById(customer._id)).balance, expectedBalance);
+      assert.equal((await User.findById(other._id)).balance, 60.25);
+      const saved = await Payment.findById(payment._id);
+      assert.equal(saved.status, 'غير مسددة');
+      assert.equal(saved.extra.manual_refunded_syp, fields.amount.toFixed(2));
+      const entries = await Adjustment.find({ key: 'manual-refund:' + payment._id }).lean();
+      assert.equal(entries.length, 1);
+      assert.equal(String(entries[0].user), String(customer._id));
+      assert.equal(entries[0].amountSyp, fields.amount.toFixed(2));
+    }
+  });
+
+  await t.test('manual refunds preserve the charged total and reject absent or invalid stored amounts', async () => {
+    const customer = await User.create({ email: 'refund-total@security.invalid', role: 'user', balance: 10 });
+    const charged = await Payment.create({ user: customer._id, amount: 99, calculatedAmount: 3.75, status: 'جاري التسديد' });
+    const response = await request('/api/admin/reject/' + charged._id, admin, 'POST', { reason: 'Invalid account information', amount: 999999 });
+    assert.equal(response.status, 200);
+    assert.equal((await User.findById(customer._id)).balance, 13.75);
+    for (const fields of [{}, { amount: 8, calculatedAmount: 0 }]) {
+      const payment = await Payment.create({ user: customer._id, status: 'جاري التسديد', ...fields });
+      const result = await request('/api/admin/reject/' + payment._id, admin, 'POST', { reason: 'Invalid account information', amount: 999999 });
+      assert.equal(result.status, 400);
+      assert.equal((await User.findById(customer._id)).balance, 13.75);
+      assert.equal((await Payment.findById(payment._id)).status, 'جاري التسديد');
+      assert.equal(await Adjustment.countDocuments({ key: 'manual-refund:' + payment._id }), 0);
+    }
+  });
+
   await t.test('customer history excludes other owners and raw supplier data but retains purchased codes', async () => {
     const chat = await Payment.create({ user: owner._id, company: 'Alragheb', speed: 'Alragheb Package', calculatedAmount: 1, status: 'تم التسديد', extra: { provider: 'alragheb', product_name: 'Package' } });
     await Payment.create({ user: owner._id, calculatedAmount: 1, status: 'تم التسديد', extra: { provider: 'prowave', digital_codes: ['OWNED-CODE'], prowave_response: { secret: 'SUPPLIER-PRIVATE' }, provider_unit_cost_usd: 0.1 } });
